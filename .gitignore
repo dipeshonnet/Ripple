@@ -1,0 +1,25 @@
+# Local runtime state
+api/.local-store.json
+
+# Dependencies and caches
+node_modules/
+.npm-cache/
+.node/
+coverage/
+.cache/
+
+# Environment and logs
+.env
+.env.*
+*.log
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Temporary render/output folders
+tmp/
+temp/
+dist/
+build/

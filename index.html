@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#05060a" />
+  <title>Ripple™ | Clover Medicare Advantage Telesales</title>
+
+  <meta name="application-name" content="Ripple Clover Medicare" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+  <meta name="apple-mobile-web-app-title" content="Ripple" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            display: ['Space Grotesk', 'Inter', 'system-ui', 'sans-serif'],
+          },
+          colors: {
+            arena: {
+              ink: '#05060a',
+              base: '#0a0c14',
+              surface: '#0e1120',
+              card: '#10131f',
+              card2: '#161a2b',
+              line: '#1d2238',
+              muted: '#6b7494',
+              text: '#e6e8f1',
+              gold: '#f5c95a',
+              gold2: '#d09a2c',
+              emerald: '#22c98a',
+              amber: '#f8b441',
+              red: '#ef4f6e',
+              violet: '#7c5cff',
+              cyan: '#3ad4ff',
+              pink: '#ff5c8a',
+              lime: '#9bff8a',
+            }
+          },
+          boxShadow: {
+            glass: '0 1px 0 rgba(255,255,255,0.05) inset, 0 0 0 1px rgba(255,255,255,0.04), 0 12px 30px -12px rgba(0,0,0,0.6)',
+            gold: '0 0 0 1px rgba(245,201,90,0.4), 0 18px 36px -10px rgba(245,201,90,0.45)',
+            violet: '0 0 0 1px rgba(124,92,255,0.45), 0 18px 36px -10px rgba(124,92,255,0.5)',
+            emerald: '0 0 0 1px rgba(34,201,138,0.4), 0 18px 36px -10px rgba(34,201,138,0.45)',
+            red: '0 0 0 1px rgba(239,79,110,0.45), 0 18px 36px -10px rgba(239,79,110,0.5)',
+          }
+        }
+      }
+    };
+  </script>
+
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body class="bg-arena-ink text-arena-text antialiased min-h-screen">
+  <div id="app"></div>
+  <div id="modal-root"></div>
+  <div id="toast-root" class="fixed top-4 right-4 z-[100] flex flex-col gap-2 pointer-events-none"></div>
+  <div id="confetti-root" class="fixed inset-0 z-[80] pointer-events-none overflow-hidden"></div>
+
+  <script src="data.js"></script>
+  <script src="data-service.js"></script>
+  <script src="app-core.js"></script>
+  <script src="app-views-agent.js"></script>
+  <script src="app-views-lead-mgr.js"></script>
+  <script src="app-modals.js"></script>
+  <script>document.addEventListener('DOMContentLoaded', () => window.Arena.boot());</script>
+
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./service-worker.js').catch(err => {
+          console.warn('Ripple service worker registration failed', err);
+        });
+      });
+    }
+  </script>
+</body>
+</html>
