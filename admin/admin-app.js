@@ -143,7 +143,16 @@
       body: opts.body == null ? undefined : JSON.stringify(opts.body),
     });
     const text = await response.text();
-    const payload = text ? JSON.parse(text) : null;
+    let payload = null;
+    try {
+      payload = text ? JSON.parse(text) : null;
+    } catch (error) {
+      const err = new Error('Admin API returned HTML instead of JSON. Start the app with launch.bat or run node api\\server.js so /api requests reach the API server.');
+      err.status = response.status;
+      err.code = 'API_UNAVAILABLE';
+      err.details = text ? text.slice(0, 300) : null;
+      throw err;
+    }
     if (!response.ok || (payload && payload.ok === false)) {
       const err = new Error(payload?.error?.message || `HTTP ${response.status}`);
       err.status = response.status;

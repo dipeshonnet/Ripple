@@ -14,16 +14,17 @@ It is a static single-page app (HTML + CSS + vanilla JS) backed by a synthetic d
 
 ## How to run it on desktop
 
-1. Double-click **`launch.bat`**. This starts a local Python static server on port **5173** and opens [http://localhost:5173](http://localhost:5173) in your default browser.
-2. The Arena Home (Agent role) loads automatically. If the page is blank, Ctrl+Shift+R to force-refresh.
+1. Double-click **`launch.bat`**. When Node.js is available, this starts the API-enabled local server on port **5173** and opens [http://localhost:5173](http://localhost:5173) in your default browser.
+2. The Arena Home (Agent role) loads automatically. The Admin Control Centre is available at [http://localhost:5173/admin](http://localhost:5173/admin) with demo user `ADMIN001`.
 3. To stop, close the launched terminal window (Ctrl+C also works).
 
-The only requirement is **Python 3** on PATH (used purely for `python -m http.server`). Nothing to install, no `npm install`, no build step.
+Admin login requires the Node API server because it posts to `/api/auth/session`. If Node.js is not found, the launcher falls back to Python static-only mode for the main arena; in that mode admin login is not available.
 
 If you'd rather start it manually:
 
 ```cmd
-python -m http.server 5173
+set PORT=5173
+node api\server.js
 ```
 
 ---
