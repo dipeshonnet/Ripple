@@ -177,6 +177,66 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 @keyframes toastIn { from { opacity: 0; transform: translateX(20px) scale(.95); } to { opacity: 1; transform: translateX(0) scale(1); } }
 @keyframes toastOut { to { opacity: 0; transform: translateX(20px) scale(.95); } }
 
+/* PWA install, update and sync status */
+.pwa-status-root {
+  position: fixed;
+  right: 14px;
+  bottom: 16px;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  pointer-events: none;
+}
+.pwa-status-chip,
+.pwa-action {
+  min-height: 34px;
+  border-radius: 9999px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(8,10,18,0.88);
+  color: #e6e8f1;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 14px 30px -22px rgba(0,0,0,0.85);
+  pointer-events: auto;
+}
+.pwa-status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 10px;
+  font-size: 11px;
+  font-weight: 800;
+}
+.pwa-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  background: #22c98a;
+  box-shadow: 0 0 0 4px rgba(34,201,138,0.13);
+}
+.pwa-status-chip[data-pwa-status-kind="offline"] .pwa-status-dot,
+.pwa-status-chip[data-pwa-status-kind="conflict"] .pwa-status-dot {
+  background: #ef4f6e;
+  box-shadow: 0 0 0 4px rgba(239,79,110,0.14);
+}
+.pwa-status-chip[data-pwa-status-kind="cached"] .pwa-status-dot,
+.pwa-status-chip[data-pwa-status-kind="syncing"] .pwa-status-dot,
+.pwa-status-chip[data-pwa-status-kind="update"] .pwa-status-dot {
+  background: #f5c95a;
+  box-shadow: 0 0 0 4px rgba(245,201,90,0.14);
+}
+.pwa-action {
+  padding: 7px 12px;
+  color: #1a1404;
+  background: linear-gradient(180deg, #f8d873, #d29a2a);
+  border-color: rgba(245,201,90,0.55);
+  font-size: 11px;
+  font-weight: 900;
+}
+.pwa-action[hidden] { display: none !important; }
+
 /* leaderboard rank gold-silver-bronze */
 .rank-badge { width: 28px; height: 28px; border-radius: 9999px; display: grid; place-items: center; font-weight: 700; font-size: 12px; }
 .rank-1 { background: linear-gradient(180deg, #ffe28a, #c98a1a); color: #1a1404; box-shadow: 0 0 0 1px rgba(245,201,90,0.5), 0 6px 14px -4px rgba(245,201,90,0.5); }
@@ -218,6 +278,21 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 }
 @media (max-width: 1023px) {
   body { padding-bottom: calc(76px + var(--safe-bottom)); }
+  .pwa-status-root {
+    left: 12px;
+    right: 12px;
+    bottom: calc(88px + var(--safe-bottom));
+  }
+}
+@media (max-width: 420px) {
+  .pwa-status-root { gap: 6px; }
+  .pwa-status-chip { max-width: 140px; padding-inline: 9px; }
+  .pwa-status-chip [data-pwa-status-label] {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .pwa-action { padding-inline: 10px; }
 }
 
 /* hide scrollbars on horizontal scroll containers but keep scrollable */

@@ -33,6 +33,8 @@ function loadService(overrides = {}) {
     ARENA_DATA_CONFIG: { apiBaseUrl: '/api', requestTimeoutMs: 50 },
     console,
     encodeURIComponent,
+    setTimeout,
+    clearTimeout,
   }, overrides);
   vm.runInNewContext(SERVICE_CODE, { window });
   return window.ArenaDataService;
@@ -55,7 +57,7 @@ test('loadBootstrapData overlays migrated entities from REST API', async () => {
     },
   });
 
-  const snapshot = await service.loadBootstrapData();
+  const snapshot = await service.loadBootstrapData({ entities: ['Users', 'Teams', 'KPI_Master', 'Agent_Current'] });
 
   assert.deepStrictEqual(normalize(snapshot.Users), apiRows.Users);
   assert.deepStrictEqual(normalize(snapshot.Teams), apiRows.Teams);
@@ -78,11 +80,69 @@ test('loadBootstrapData falls back to seed rows when REST API is unavailable', a
     },
   });
 
-  const snapshot = await service.loadBootstrapData();
+  const snapshot = await service.loadBootstrapData({ entities: ['Users', 'Teams', 'KPI_Master', 'Agent_Current'] });
 
   assert.deepStrictEqual(normalize(snapshot.Users), seed.Users);
   assert.deepStrictEqual(normalize(snapshot.Teams), seed.Teams);
   assert.deepStrictEqual(normalize(snapshot.KPI_Master), seed.KPI_Master);
   assert.deepStrictEqual(normalize(snapshot.Agent_Current), seed.Agent_Current);
   assert.deepStrictEqual(normalize(service.INDEXEDDB_STORES), ['entityCache', 'pendingMutations', 'appConfig', 'syncStatus']);
+});
+
+test('IndexedDB fallback emits sync status events for the PWA indicator', async () => {
+  const events = [];
+  class TestCustomEvent {
+    constructor(type, init) {
+      this.type = type;
+      this.detail = init && init.detail;
+    }
+  }
+  const service = loadService({
+    fetch: async () => {
+      throw new Error('network unavailable');
+    },
+    CustomEvent: TestCustomEvent,
+    dispatchEvent: (event) => events.push(event),
+    addEventListener: () => {},
+  });
+
+  await service.loadBootstrapData({ entities: ['Users'] });
+
+  const status = events.find((event) => event.type === 'arena:data-status' && event.detail?.key === 'Users');
+  assert.ok(status);
+  assert.equal(status.detail.status, 'fallback');
+});
+
+test('persistWorkflowState posts optimistic workflow snapshot to REST API', async () => {
+  const calls = [];
+  const service = loadService({
+    fetch: async (url, options = {}) => {
+      calls.push({ url, method: options.method || 'GET', body: options.body ? JSON.parse(options.body) : null });
+      if (url === '/api/auth/session') return jsonResponse({ ok: true, data: { token: 'TOKEN' } });
+      if (url === '/api/workflow/mutations') {
+        return jsonResponse({
+          ok: true,
+          data: {
+            mutationId: options.body ? JSON.parse(options.body).mutationId : null,
+            applied: 1,
+            touched: ['Users'],
+            entities: { Users: [{ UserID: 'API_USER', Name: 'API User', updated_at: '2026-06-21T00:00:00.000Z' }] },
+            versions: { Users: { API_USER: '2026-06-21T00:00:00.000Z' } },
+            appliedAt: '2026-06-21T00:00:00.000Z',
+          },
+        });
+      }
+      throw new Error(`Unexpected URL ${url}`);
+    },
+  });
+
+  const mutation = await service.persistWorkflowState({
+    Users: [{ UserID: 'API_USER', Name: 'API User' }],
+  }, { actorUserId: 'AG001', reason: 'unit-test' });
+  await service.flushPendingMutations();
+
+  assert.equal(mutation.operation, 'snapshot');
+  assert.deepStrictEqual(calls.map((call) => call.url), ['/api/auth/session', '/api/workflow/mutations']);
+  assert.equal(calls[1].body.actorUserId, 'AG001');
+  assert.deepStrictEqual(normalize(calls[1].body.entities.Users), [{ UserID: 'API_USER', Name: 'API User' }]);
 });
