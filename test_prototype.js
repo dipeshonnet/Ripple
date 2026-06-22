@@ -21,13 +21,17 @@ const path = require('path');
 const vm = require('vm');
 
 const ROOT = __dirname;
+const CORE_SOURCE_FILES = ['app-core-state.js', 'app-core.js'];
+const AGENT_SOURCE_FILES = ['app-views-agent-helpers.js', 'app-views-agent-home.js', 'app-views-agent.js'];
+const LEAD_SOURCE_FILES = ['app-views-lead-mgr-helpers.js', 'app-views-lead-mgr.js'];
+const ADMIN_SOURCE_FILES = ['admin/admin-dashboard.js', 'admin/admin-app.js'];
 const SOURCE_FILES = [
   'data.js',
-  'app-core.js',
-  'app-views-agent.js',
-  'app-views-lead-mgr.js',
+  ...CORE_SOURCE_FILES,
+  ...AGENT_SOURCE_FILES,
+  ...LEAD_SOURCE_FILES,
   'app-modals.js',
-  'admin/admin-app.js',
+  ...ADMIN_SOURCE_FILES,
 ];
 
 let pass = 0;
@@ -149,6 +153,10 @@ vm.createContext(ctx);
 function loadScript(file) {
   const src = fs.readFileSync(path.join(ROOT, file), 'utf-8');
   vm.runInContext(src, ctx, { filename: file });
+}
+
+function readSource(files) {
+  return files.map(file => fs.readFileSync(path.join(ROOT, file), 'utf-8')).join('\n');
 }
 
 // ===========================================================================
@@ -689,8 +697,8 @@ test(
 test(
   'Challenge demo wording uses Pts and does not award challenge XP',
   () => {
-    const agentSrc = fs.readFileSync(path.join(ROOT, 'app-views-agent.js'), 'utf-8');
-    const coreSrc = fs.readFileSync(path.join(ROOT, 'app-core.js'), 'utf-8');
+    const agentSrc = readSource(AGENT_SOURCE_FILES);
+    const coreSrc = readSource(CORE_SOURCE_FILES);
     assert(!/Claim victory \(sim\)/.test(agentSrc), 'old simulated victory label remains');
     assert(agentSrc.includes('Submit Win for TL Validation'), 'TL validation submit label missing');
     assert(!/pts won · \+\$\{Math\.round/.test(agentSrc), 'challenge result still displays bonus XP');
@@ -705,9 +713,9 @@ test(
 console.log('\n[Phase 10] Forbidden text');
 
 const SCAN_FILES = [
-  'app-core.js',
-  'app-views-agent.js',
-  'app-views-lead-mgr.js',
+  ...CORE_SOURCE_FILES,
+  ...AGENT_SOURCE_FILES,
+  ...LEAD_SOURCE_FILES,
   'app-modals.js',
   'index.html',
   'styles.css',
@@ -752,7 +760,7 @@ test('commercial exposure reduced to demo-safe scale', () => {
 });
 
 test('Agent vs Agent category uses challenge type, not KPI theme', () => {
-  const src = fs.readFileSync(path.join(ROOT, 'app-views-agent.js'), 'utf-8');
+  const src = readSource(AGENT_SOURCE_FILES);
   assert(src.includes('if (meta.type) return list.filter(c => c.Challenge_Type === meta.type)'), 'type-based challenge category filter missing');
 });
 
@@ -763,7 +771,7 @@ test('opponent selection no longer reopens challenge modal', () => {
 });
 
 test('challenge win goes to TL validation before award', () => {
-  const src = fs.readFileSync(path.join(ROOT, 'app-core.js'), 'utf-8');
+  const src = readSource(CORE_SOURCE_FILES);
   assert(src.includes("cs.status = 'Pending Validation'"), 'settle should submit for validation');
   assert(src.includes('tl-validate-challenge'), 'TL validation action missing');
 });
@@ -771,8 +779,8 @@ test('challenge win goes to TL validation before award', () => {
 
 
 test('client outcome layer is present and XP is relabelled for demo UI', () => {
-  const agentSrc = fs.readFileSync(path.join(ROOT, 'app-views-agent.js'), 'utf-8');
-  const leadSrc = fs.readFileSync(path.join(ROOT, 'app-views-lead-mgr.js'), 'utf-8');
+  const agentSrc = readSource(AGENT_SOURCE_FILES);
+  const leadSrc = readSource(LEAD_SOURCE_FILES);
   assert(agentSrc.includes('My member impact today'), 'Agent member-impact section missing');
   assert(agentSrc.includes('Level Progress'), 'Level Progress label missing from Agent UI');
   assert(leadSrc.includes('Client outcome coaching board'), 'TL outcome coaching board missing');
@@ -781,7 +789,7 @@ test('client outcome layer is present and XP is relabelled for demo UI', () => {
 });
 
 test('agent UI does not show modeled dollar savings for repeat contacts', () => {
-  const agentSrc = fs.readFileSync(path.join(ROOT, 'app-views-agent.js'), 'utf-8');
+  const agentSrc = readSource(AGENT_SOURCE_FILES);
   assert(!/repeat contact.*\$|\$.*repeat contact/i.test(agentSrc), 'Agent UI should not show repeat-contact dollar savings');
   assert(agentSrc.includes('No dollar savings are shown at agent level'), 'Agent guardrail copy missing');
 });
@@ -795,7 +803,7 @@ test('agent UI does not show modeled dollar savings for repeat contacts', () => 
 console.log('\n[Phase 10] Final acceptance checks');
 
 test('TL and Manager have separate Client Outcomes navigation', () => {
-  const src = fs.readFileSync(path.join(ROOT, 'app-core.js'), 'utf-8');
+  const src = readSource(CORE_SOURCE_FILES);
   assert(src.includes("id: 'lead-outcomes'") && src.includes("Team Console"), 'TL Client Outcomes nav missing');
   assert(src.includes("id: 'mgr-outcomes'") && src.includes("Account Command"), 'Manager Client Outcomes nav missing');
 });
@@ -851,9 +859,9 @@ test('TL penalty exposure is less than 10% of Manager account penalty', () => {
 });
 
 test('RAG counts and filters are implemented for Agent/TL/Manager', () => {
-  const core = fs.readFileSync(path.join(ROOT, 'app-core.js'), 'utf-8');
-  const agent = fs.readFileSync(path.join(ROOT, 'app-views-agent.js'), 'utf-8');
-  const lead = fs.readFileSync(path.join(ROOT, 'app-views-lead-mgr.js'), 'utf-8');
+  const core = readSource(CORE_SOURCE_FILES);
+  const agent = readSource(AGENT_SOURCE_FILES);
+  const lead = readSource(LEAD_SOURCE_FILES);
   assert(core.includes('state.ragFilter'), 'global RAG filter handling missing');
   assert(agent.includes('data-rag-filter="Green"') && agent.includes('displayRows'), 'Agent RAG filter wiring missing');
   assert(lead.includes('finalRagCountButtons') && lead.includes('finalFilteredRows'), 'TL/Mgr RAG count/filter helpers missing');
@@ -874,7 +882,7 @@ test('Definition help component is visible and mobile-safe', () => {
 });
 
 test('Manager navigation is executive-organized', () => {
-  const src = fs.readFileSync(path.join(ROOT, 'app-core.js'), 'utf-8');
+  const src = readSource(CORE_SOURCE_FILES);
   const order = ['mgr-outcomes','mgr-trends','mgr-rca','mgr-commercial','mgr-whatif','mgr-teams','mgr-adoption'];
   const positions = order.map(x => src.indexOf(x));
   assert(positions.every(p => p > -1), 'one or more manager nav entries missing');

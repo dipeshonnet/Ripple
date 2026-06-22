@@ -13,13 +13,15 @@ The parent `Ripple` folder can contain BRD documents, rendered output, and a non
 - Main PWA entrypoint: `index.html`
 - Admin entrypoint: `admin/index.html`
 - API server entrypoint: `api/server.js`
-- Core browser globals: `app-core.js`, `app-views-agent.js`, `app-views-lead-mgr.js`, `app-modals.js`
-- Admin browser globals: `admin/admin-app.js`
-- REST API implementation: `api/app.js`, `api/store.js`, `api/entity-metadata.js`
+- Core browser globals: `app-core-state.js`, `app-core.js`, `app-modals.js`
+- Agent browser views: `app-views-agent-helpers.js`, `app-views-agent-home.js`, `app-views-agent.js`
+- Team Lead / Manager browser views: `app-views-lead-mgr-helpers.js`, `app-views-lead-mgr.js`
+- Admin browser views: `admin/admin-dashboard.js`, `admin/admin-app.js`
+- REST API implementation: `api/app.js`, `api/store.js`, `api/store-utils.js`, `api/store-sla.js`, `api/entity-metadata.js`
 - Browser data access layer: `data-service.js`
 - PWA support: `pwa-runtime.js`, `service-worker.js`, `manifest.webmanifest`
 
-This is a script-tag based app with browser globals, not a bundled npm/Vite project. Prefer small, targeted changes that preserve the current load order unless a broader migration is explicitly requested.
+This is a script-tag based app with browser globals, not a bundled npm/Vite project. Preserve the script order in `index.html`, `admin/index.html`, and `service-worker.js` when adding or moving browser modules.
 
 ## Large File Guidance
 

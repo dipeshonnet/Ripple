@@ -1,6 +1,9 @@
 const fs = require('fs');
-const agent = fs.readFileSync('app-views-agent.js','utf8');
-const lm = fs.readFileSync('app-views-lead-mgr.js','utf8');
+function readAll(files) {
+  return files.map(file => fs.readFileSync(file, 'utf8')).join('\n');
+}
+const agent = readAll(['app-views-agent-helpers.js', 'app-views-agent-home.js', 'app-views-agent.js']);
+const lm = readAll(['app-views-lead-mgr-helpers.js', 'app-views-lead-mgr.js']);
 const data = fs.readFileSync('data.js','utf8');
 const all = agent + '\n' + lm;
 const checks = [];

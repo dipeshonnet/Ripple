@@ -1,5 +1,5 @@
 /* eslint-disable */
-const APP_VERSION = '2026-06-22-pwa-final';
+const APP_VERSION = '2026-06-22-module-split';
 const CACHE_PREFIX = 'ripple-clover-medicare';
 const STATIC_CACHE = `${CACHE_PREFIX}-static-${APP_VERSION}`;
 const RUNTIME_CACHE = `${CACHE_PREFIX}-runtime-${APP_VERSION}`;
@@ -17,11 +17,16 @@ const APP_SHELL = [
   './data.js',
   './data-service.js',
   './pwa-runtime.js',
+  './app-core-state.js',
   './app-core.js',
+  './app-views-agent-helpers.js',
+  './app-views-agent-home.js',
   './app-views-agent.js',
+  './app-views-lead-mgr-helpers.js',
   './app-views-lead-mgr.js',
   './app-modals.js',
   ADMIN_SHELL,
+  './admin/admin-dashboard.js',
   './admin/admin-app.js',
   STATIC_MANIFEST,
   './icons/icon-192.png',
