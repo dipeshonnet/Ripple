@@ -1,0 +1,29 @@
+# Normalize text files for stable diffs across Windows and Unix tools.
+* text=auto
+
+# Source, config, and documentation files.
+*.css text eol=lf
+*.html text eol=lf
+*.js text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.py text eol=lf
+*.sql text eol=lf
+*.webmanifest text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+_headers text eol=lf
+_redirects text eol=lf
+
+# Windows launch/test scripts.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary assets and documents.
+*.docx binary
+*.ico binary
+*.jpg binary
+*.jpeg binary
+*.png binary
+*.webp binary
+*.xlsx binary
