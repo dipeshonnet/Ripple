@@ -116,12 +116,11 @@
   }
 
   function agentVisibleKpiRow(row) {
-    // Financial efficiency KPIs are TL/Manager/account signals; agents see controllable sales, quality and compliance KPIs.
-    // Legacy Healthcare CC smoke-test string retained only in comment: ['KPI001','KPI008'].includes(row.KPI_ID)
-    return row && !['KPI008','KPI017','KPI018','KPI019','KPI020','KPI021'].includes(row.KPI_ID);
+    return row && A.kpiVisibleForRole(row.KPI_ID, 'Agent');
   }
   function visibleTodayRowsForUser(userId) {
-    return A.todaysRowsForUser(userId).filter(agentVisibleKpiRow).map(agentDisplayRow);
+    const user = A.userById(userId);
+    return A.visibleKpiRowsForRole(A.todaysRowsForUser(userId), 'Agent', { processId: user?.ProcessID }).map(agentDisplayRow);
   }
 
   function dueLabel(due) {
@@ -187,23 +186,8 @@
       if (c && c.Status !== 'Completed') pendingByType[m.Module_Type] = (pendingByType[m.Module_Type] || 0) + 1;
     }
 
-    // Top KPIs (highest display weight, applicable for my process)
-    const homeKpiDisplayWeights = {
-      KPI014: 600, // AHT guardrail
-      KPI012: 500, // QA score
-      KPI015: 400, // Schedule adherence
-      KPI016: 300, // Utilization
-      KPI013: 200, // Call adherence
-      KPI009: 100, // SOA compliance
-    };
-    const homeDisplayWeight = k => homeKpiDisplayWeights[k.KPI_ID] || (k.Weightage || 0);
-    const myKpis = s.kpis.filter(k => {
-      const proc = A.processById(me.ProcessID);
-      if (['KPI008','KPI017','KPI018','KPI019','KPI020','KPI021'].includes(k.KPI_ID)) return false;
-      if (k.Applicability === 'All') return true;
-      if (k.Applicability === 'Voice') return proc?.ProcessType === 'Voice';
-      return proc?.ProcessType === 'Support Queue';
-    }).sort((a, b) => (homeDisplayWeight(b) - homeDisplayWeight(a)) || ((b.Weightage || 0) - (a.Weightage || 0)));
+    // Top KPIs come from KPI Manager visibility/configuration; older seed data falls back through core guardrails.
+    const myKpis = A.kpisForRole('Agent', { processId: me.ProcessID });
     const topKpiCards = myKpis.slice(0, 6).map(k => {
       const row = todayRows.find(r => r.KPI_ID === k.KPI_ID);
       return { kpi: k, row };
@@ -230,6 +214,7 @@
     const greenCount = todayRows.filter(r => r.Status === 'Green').length;
     const amberCount = todayRows.filter(r => r.Status === 'Amber').length;
     const redCount = todayRows.filter(r => r.Status === 'Red').length;
+    const focusRows = A.sortKpiRowsForDisplay(todayRows.filter(r => A.kpiMetricGroup(r.KPI_ID) === 'operational')).slice(0, 3);
 
     const ragHeroClass = rag === 'Green' ? 'rag-green' : rag === 'Amber' ? 'rag-amber' : 'rag-red';
 
@@ -322,9 +307,11 @@
             <span class="chip bg-arena-cyan/15 text-arena-cyan border border-arena-cyan/30"><i data-lucide="heart-handshake" class="text-[10px]"></i> Member-first view</span>
           </div>
           <div class="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3">
-            <div class="rounded-xl bg-white/[0.03] border border-white/8 p-3"><div class="text-[10px] uppercase tracking-wider text-arena-muted font-bold">AHT guardrail</div><div class="hero-num text-2xl mt-1 ${todayRows.find(r => r.KPI_ID === 'KPI014')?.Status === 'Green' ? 'rag-green' : 'rag-amber'}">${todayRows.find(r => r.KPI_ID === 'KPI014')?.Current_Value || todayRows.find(r => r.KPI_ID === 'KPI014')?.Actual || '—'}</div><div class="text-[10px] text-arena-muted">handle time + ACW</div></div>
-            <div class="rounded-xl bg-white/[0.03] border border-white/8 p-3"><div class="text-[10px] uppercase tracking-wider text-arena-muted font-bold">QA score</div><div class="hero-num text-2xl mt-1 ${todayRows.find(r => r.KPI_ID === 'KPI012')?.Status === 'Green' ? 'rag-green' : 'rag-amber'}">${todayRows.find(r => r.KPI_ID === 'KPI012')?.Current_Value || todayRows.find(r => r.KPI_ID === 'KPI012')?.Actual || '—'}</div><div class="text-[10px] text-arena-muted">quality + accuracy</div></div>
-            <div class="rounded-xl bg-white/[0.03] border border-white/8 p-3"><div class="text-[10px] uppercase tracking-wider text-arena-muted font-bold">Schedule adherence</div><div class="hero-num text-2xl mt-1 ${todayRows.find(r => r.KPI_ID === 'KPI015')?.Status === 'Green' ? 'rag-green' : 'rag-amber'}">${todayRows.find(r => r.KPI_ID === 'KPI015')?.Current_Value || todayRows.find(r => r.KPI_ID === 'KPI015')?.Actual || '—'}</div><div class="text-[10px] text-arena-muted">available on task</div></div>
+            ${focusRows.map(row => {
+              const kpi = A.kpiById(row.KPI_ID) || {};
+              const tone = row.Status === 'Green' ? 'rag-green' : row.Status === 'Red' ? 'rag-red' : 'rag-amber';
+              return `<div class="rounded-xl bg-white/[0.03] border border-white/8 p-3"><div class="text-[10px] uppercase tracking-wider text-arena-muted font-bold">${escapeHtml(kpi.KPI_Name || row.KPI_ID)}</div><div class="hero-num text-2xl mt-1 ${tone}">${row.Current_Value || row.Actual || '---'}</div><div class="text-[10px] text-arena-muted">${escapeHtml(kpi.KPI_Type || 'configured KPI')}</div></div>`;
+            }).join('')}
             <div class="rounded-xl bg-white/[0.03] border border-white/8 p-3"><div class="text-[10px] uppercase tracking-wider text-arena-muted font-bold">Level Progress</div><div class="hero-num text-2xl mt-1 text-arena-violet">${lvl.pct}%</div><div class="text-[10px] text-arena-muted">growth, not spendable</div></div>
           </div>
         </section>
@@ -658,34 +645,19 @@
 
   // ---- SCORECARD (Performance Cockpit) ----------------------------------
 
-  const KPI_SUGGESTIONS = {
-    KPI001: { red: 'Rebuild opener, needs discovery and plan-match confidence to lift overall conversion.', amber: 'Tighten eligibility confirmation and benefit-value framing.', green: 'Strong conversion momentum — protect compliant close behavior.' },
-    KPI002: { red: 'Pair with a top closer and practice eligible-call objection handling.', amber: 'Focus on confirmed eligible/interested calls and ask for enrollment with confidence.', green: 'Eligible-call close skill is strong.' },
-    KPI003: { red: 'Increase application velocity while maintaining SOA/disclosure guardrails.', amber: 'Convert one more eligible conversation into a completed application today.', green: 'Strong sales velocity.' },
-    KPI004: { red: 'Review application accuracy and plan fit to prevent non-effectuated enrollments.', amber: 'Audit fallout reasons before submitting new apps.', green: 'Applications are converting to active members.' },
-    KPI005: { red: 'Stop preventable fallout: eligibility, duplicate, incomplete application or member-cancel reasons.', amber: 'Check fallout reason codes with your TL.', green: 'Low fallout quality signal.' },
-    KPI006: { red: 'Complete CMS test-call refresher before the next shift.', amber: 'Practice the test-call sequence and required phrasing.', green: 'CMS test-call behavior is strong.' },
-    KPI007: { red: 'Immediate CTM review required with TL and compliance.', amber: 'Stay alert for complaint-risk language and escalation needs.', green: 'No CTM concern.' },
-    KPI008: { red: 'Program-level CTM rate needs compliance RCA.', amber: 'Watch complaint-rate trend.', green: 'CTM rate controlled.' },
-    KPI009: { red: 'Reconfirm Scope of Appointment steps before every plan discussion.', amber: 'Check SOA documentation completeness.', green: 'SOA handling is compliant.' },
-    KPI010: { red: 'Deliver all required CMS disclosures in the approved sequence.', amber: 'Slow down on disclosure transitions.', green: 'Disclosure completion is strong.' },
-    KPI011: { red: 'Reduce information-only exits by clarifying eligibility, value and next step.', amber: 'Handle benefit confusion and close with confidence.', green: 'Low RFI leakage.' },
-    KPI012: { red: 'Review QA audit misses and compliance-critical elements.', amber: 'Tighten call documentation and plan-match explanation.', green: 'High-quality Medicare sales handling.' },
-    KPI013: { red: 'Return to approved call flow and script structure end to end.', amber: 'Watch deviations around disclosures and enrollment close.', green: 'Call-flow adherence is strong.' },
-    KPI014: { red: 'Reduce avoidable hold/ACW but do not rush CMS disclosures.', amber: 'Trim wrap-up after confirming documentation accuracy.', green: 'AHT is efficient with guardrails.' },
-    KPI015: { red: 'Sync breaks and aux with WFM to protect sales capacity.', amber: 'Improve schedule discipline during peak intervals.', green: 'Strong schedule adherence.' },
-    KPI016: { red: 'Increase active selling time and reduce avoidable idle/unavailable time.', amber: 'Protect productive call-handling windows.', green: 'High productive utilization.' },
-    KPI017: { red: 'Team shrinkage requires staffing/coaching review.', amber: 'Watch absence/training/break leakage.', green: 'Shrinkage controlled.' },
-    KPI018: { red: 'CPA is too high; recover through conversion, effectuation and utilization.', amber: 'Watch acquisition economics.', green: 'CPA efficiency is strong.' },
-    KPI019: { red: 'Gross cost per application is high; increase qualified applications.', amber: 'Improve sales velocity without lowering quality.', green: 'Application economics healthy.' },
-        KPI021: { red: 'Eligible-call cost is high; review routing and qualification efficiency.', amber: 'Watch front-end qualification cost.', green: 'Eligible-call efficiency healthy.' }
-  };
-
   function kpiSuggestion(kpiId, status) {
-    const map = KPI_SUGGESTIONS[kpiId];
-    if (!map) return null;
+    const kpi = A.kpiById(kpiId) || {};
     const key = (status || 'amber').toLowerCase();
-    return map[key] || map.amber;
+    const configured = kpi[`Coach_${key}`]
+      || kpi[`Suggestion_${key}`]
+      || kpi[`Next_Best_Action_${key}`]
+      || kpi.Next_Best_Action
+      || kpi.Coaching_Guidance;
+    if (configured) return configured;
+    const name = kpi.KPI_Name || 'this KPI';
+    if (key === 'green') return `Keep protecting ${name} while maintaining compliance guardrails.`;
+    if (key === 'red') return `Prioritize ${name} recovery with your TL before the next interval.`;
+    return `Watch ${name} and use the next-best action from your scorecard.`;
   }
 
   function teamAvgKpi(teamId, kpiId, date) {
@@ -759,11 +731,8 @@
     const recoveryRows = todayRows.filter(r => r.Status !== 'Green').sort((a, b) => (a.Score || 0) - (b.Score || 0)).slice(0, 3);
     const activeRagFilter = A.state.ragFilter || 'all';
     const displayRows = activeRagFilter && activeRagFilter !== 'all' ? todayRows.filter(r => r.Status === activeRagFilter) : todayRows;
-    const operationalMetricIds = ['KPI014','KPI012','KPI015','KPI016','KPI013','KPI009','KPI010','KPI006'];
-    const outcomeMetricIds = ['KPI001','KPI002','KPI003','KPI004','KPI005','KPI011','KPI007'];
-    const orderRows = (rows, ids) => ids.map(id => rows.find(r => r.KPI_ID === id)).filter(Boolean);
-    const operationalRows = orderRows(displayRows, operationalMetricIds);
-    const outcomeRows = orderRows(displayRows, outcomeMetricIds);
+    const operationalRows = A.sortKpiRowsForDisplay(displayRows.filter(r => A.kpiMetricGroup(r.KPI_ID) === 'operational'));
+    const outcomeRows = A.sortKpiRowsForDisplay(displayRows.filter(r => A.kpiMetricGroup(r.KPI_ID) === 'outcome'));
 
     return `
       <div class="space-y-4 fade-in">
@@ -985,30 +954,13 @@
   }
 
   function clientImpactLine(kpiId) {
-    const map = {
-      KPI001: 'Overall conversion: enrollments divided by total calls handled; primary sales effectiveness signal.',
-      KPI002: 'Eligible-call conversion: enrollments divided by eligible and interested calls; cleanest closing-skill indicator.',
-      KPI003: 'Applications per day: submitted applications per day; measures sales velocity for agent, supervisor and team.',
-      KPI004: 'Effectuation: submitted applications that activate into premium-paying members; core revenue-quality signal.',
-      KPI005: 'Fallout: applications that do not effectuate, reviewed by reason code for corrective action.',
-      KPI006: 'CMS test call: secret-shopper/test-call performance; any failure requires immediate RCA.',
-      KPI007: 'CTMs: Complaints to Medicare attributed to agent; even one CTM requires mandatory review.',
-      KPI008: 'CTM rate: program-level complaints per 1,000 enrollments; used for audit and sanctions risk.',
-      KPI009: 'SOA compliance: Scope of Appointment documented and followed; direct CMS audit requirement.',
-      KPI010: 'Disclosure completion: required CMS disclosures delivered accurately and in sequence.',
-      KPI011: 'RFI rate: information-packet requests instead of enrollments; high rate signals benefit confusion or hesitant close.',
-      KPI012: 'Quality assurance: Medicare sales quality and compliance scorecard, weighted to compliance-critical elements.',
-      KPI013: 'Call adherence: approved call flow and script followed end-to-end; quality and compliance risk control.',
-      KPI014: 'Average handle time: talk time plus after-call work; managed with compliance guardrails, not by rushing.',
-      KPI015: 'Schedule adherence: time available and on-task during scheduled hours; drives call capacity.',
-      KPI016: 'Utilization: logged hours spent in active call handling versus idle or unavailable time.',
-      KPI017: 'Shrinkage: scheduled hours lost to absence, training, coaching and breaks.',
-      KPI018: 'CPA: fully loaded program cost divided by effectuated enrollments; manager-level financial efficiency.',
-      KPI019: 'Cost per application: total cost divided by submitted applications; read with effectuation rate.',
-      KPI020: 'Leadership financial yield: commercial efficiency assumption shown only in leadership views, not an agent KPI.',
-      KPI021: 'Cost per eligible call: total cost divided by eligible call volume; routing and qualification efficiency.'
-    };
-    return map[kpiId] || 'Medicare telesales metric definition aligned to operational control and enrollment outcome impact.';
+    const kpi = A.kpiById(kpiId) || {};
+    const configured = kpi.Description || kpi.Business_Definition || kpi.Definition;
+    if (configured) return configured;
+    const group = A.kpiMetricGroup(kpiId);
+    if (group === 'operational') return 'Configurable operational KPI used for coaching, compliance and capacity guardrails.';
+    if (group === 'financial') return 'Leadership-only financial KPI configured in KPI Manager.';
+    return 'Configurable outcome KPI aligned to Medicare telesales performance.';
   }
 
   function renderKpiCard(row, me) {
@@ -1366,16 +1318,16 @@
   // ---- CHALLENGE ARENA ---------------------------------------------------
 
   const CHALLENGE_THEMES = [
-    { id: 'all',                label: 'All',                 icon: 'layers',          kpiId: null,     color: 'text-arena-text' },
-    { id: 'Agent vs Agent',     label: 'Agent vs Agent',      icon: 'swords',          kpiId: null,     color: 'text-arena-cyan',    type: 'Peer' },
-    { id: 'Team vs Team',       label: 'Team vs Team',        icon: 'users-round',     kpiId: null,     color: 'text-arena-violet',  type: 'Team' },
-    { id: 'TL Assigned',        label: 'TL Assigned',         icon: 'shield',          kpiId: null,     color: 'text-arena-amber',   type: 'Team Lead Issued' },
-    { id: 'SLA Recovery',       label: 'SLA Recovery',        icon: 'badge-dollar-sign', kpiId: null,   color: 'text-arena-red' },
-    { id: 'Quality Shield',     label: 'Quality Shield',      icon: 'shield-check',    kpiId: 'KPI012', color: 'text-arena-gold' },
-    { id: 'Conversion Sprint',  label: 'Conversion Sprint',   icon: 'zap',             kpiId: 'KPI002', color: 'text-arena-cyan' },
-    { id: 'APD Dash',           label: 'APD Dash',            icon: 'gauge',           kpiId: 'KPI003', color: 'text-arena-pink' },
-    { id: 'SOA Discipline',     label: 'SOA Discipline',      icon: 'file-check-2',    kpiId: 'KPI009', color: 'text-arena-emerald' },
-    { id: 'Compliance Quest',   label: 'Compliance Quest',    icon: 'lock',            kpiId: 'KPI006', color: 'text-arena-violet' },
+    { id: 'all',                label: 'All',                 icon: 'layers',     color: 'text-arena-text' },
+    { id: 'Agent vs Agent',     label: 'Agent vs Agent',      icon: 'swords',     color: 'text-arena-cyan',    type: 'Peer' },
+    { id: 'Team vs Team',       label: 'Team vs Team',        icon: 'users-round',     color: 'text-arena-violet',  type: 'Team' },
+    { id: 'TL Assigned',        label: 'TL Assigned',         icon: 'shield',     color: 'text-arena-amber',   type: 'Team Lead Issued' },
+    { id: 'SLA Recovery',       label: 'SLA Recovery',        icon: 'badge-dollar-sign',   color: 'text-arena-red' },
+    { id: 'Quality Shield',     label: 'Quality Shield',      icon: 'shield-check', color: 'text-arena-gold' },
+    { id: 'Conversion Sprint',  label: 'Conversion Sprint',   icon: 'zap', color: 'text-arena-cyan' },
+    { id: 'APD Dash',           label: 'APD Dash',            icon: 'gauge', color: 'text-arena-pink' },
+    { id: 'SOA Discipline',     label: 'SOA Discipline',      icon: 'file-check-2', color: 'text-arena-emerald' },
+    { id: 'Compliance Quest',   label: 'Compliance Quest',    icon: 'lock', color: 'text-arena-violet' },
   ];
 
   function challengeTheme(c) {
@@ -1909,7 +1861,9 @@
     const me = A.userById(s.activeUserId);
     if (!me || me.Role !== 'Agent') return '<div class="glass rounded-2xl p-6">No agent selected.</div>';
     const filter = s.lbFilter || 'team';
-    const kpiId = s.lbKpi || 'KPI005';
+    const agentKpis = A.kpisForRole('Agent', { processId: me.ProcessID });
+    const defaultKpi = agentKpis.find(k => A.kpiMetricGroup(k) === 'outcome') || agentKpis[0] || {};
+    const kpiId = agentKpis.some(k => k.KPI_ID === s.lbKpi) ? s.lbKpi : defaultKpi.KPI_ID;
 
     const rows = buildLeaderboardRows(me, filter, kpiId);
     const myRow = rows.find(r => r.userId === me.UserID);
@@ -1951,7 +1905,7 @@
           <section>
             <div class="text-[10px] uppercase tracking-wider text-arena-muted font-bold mb-2">Pick a KPI</div>
             <div class="scroll-x">
-              ${s.kpis.map(k => `
+              ${agentKpis.map(k => `
                 <button data-action="set-lb-kpi" data-kpi="${k.KPI_ID}" class="${kpiId === k.KPI_ID ? 'bg-arena-cyan/15 border-arena-cyan/40 text-arena-cyan' : 'btn-ghost'} text-[11px] !px-3 !py-1.5 !rounded-full whitespace-nowrap border">${escapeHtml(k.KPI_Name)}</button>
               `).join('')}
             </div>
@@ -1959,35 +1913,35 @@
         ` : ''}
 
         <!-- TOP 3 PODIUM -->
-        ${rows.length >= 3 ? renderPodium(rows.slice(0, 3), me, filter) : ''}
+        ${rows.length >= 3 ? renderPodium(rows.slice(0, 3), me, filter, kpiId) : ''}
 
         <!-- RANK LIST (4-N or all if podium not shown) -->
         <section>
           <div class="font-display font-bold text-[15px] mb-2 flex items-center gap-2"><i data-lucide="list-ordered" class="text-arena-cyan"></i> ${rows.length >= 3 ? 'Rank 4 onwards' : 'Standings'}</div>
           <div class="space-y-2">
-            ${(rows.length >= 3 ? rows.slice(3) : rows).slice(0, 30).map(r => renderLbRow(r, me, filter)).join('') || `<div class="glass rounded-2xl p-6 text-center text-arena-muted">No data yet.</div>`}
+            ${(rows.length >= 3 ? rows.slice(3) : rows).slice(0, 30).map(r => renderLbRow(r, me, filter, kpiId)).join('') || `<div class="glass rounded-2xl p-6 text-center text-arena-muted">No data yet.</div>`}
           </div>
         </section>
       </div>
     `;
   }
 
-  function renderPodium(top3, me, filter) {
+  function renderPodium(top3, me, filter, kpiId) {
     const [g, s, b] = top3; // gold, silver, bronze
     return `
       <section class="podium-wrap relative overflow-hidden rounded-2xl p-4 sm:p-6">
         <div class="absolute -top-12 left-1/2 -translate-x-1/2 w-72 h-72 level-glow"></div>
         <div class="font-display font-bold text-[14px] mb-3 flex items-center gap-2 relative"><i data-lucide="crown" class="text-arena-gold"></i> Top of the board</div>
         <div class="podium relative">
-          ${podiumTile(s, me, 2, 'silver')}
-          ${podiumTile(g, me, 1, 'gold')}
-          ${podiumTile(b, me, 3, 'bronze')}
+          ${podiumTile(s, me, 2, 'silver', kpiId)}
+          ${podiumTile(g, me, 1, 'gold', kpiId)}
+          ${podiumTile(b, me, 3, 'bronze', kpiId)}
         </div>
       </section>
     `;
   }
 
-  function podiumTile(row, me, rank, tone) {
+  function podiumTile(row, me, rank, tone, kpiId) {
     const u = A.userById(row.userId);
     const isMe = row.userId === me.UserID;
     const rankCls = rank === 1 ? 'rank-1' : rank === 2 ? 'rank-2' : 'rank-3';
@@ -2012,13 +1966,13 @@
             <span class="chip bg-white/5 border border-white/10 text-arena-muted">${(row.points || 0).toLocaleString()} pts</span>
             <span class="chip bg-arena-violet/15 text-arena-violet border border-arena-violet/30">${(row.xp || 0).toLocaleString()} progress</span>
           </div>
-          ${!isMe ? `<button data-action="challenge-back" data-user="${row.userId}" data-kpi="KPI005" class="btn-primary text-[11px] !py-1 !px-2.5 mt-1"><i data-lucide="swords" class="text-[11px]"></i> Challenge</button>` : `<span class="chip bg-arena-violet/15 text-arena-violet border border-arena-violet/30 mt-1">YOU</span>`}
+          ${!isMe ? `<button data-action="challenge-back" data-user="${row.userId}" data-kpi="${escapeHtml(kpiId || '')}" class="btn-primary text-[11px] !py-1 !px-2.5 mt-1"><i data-lucide="swords" class="text-[11px]"></i> Challenge</button>` : `<span class="chip bg-arena-violet/15 text-arena-violet border border-arena-violet/30 mt-1">YOU</span>`}
         </div>
       </div>
     `;
   }
 
-  function renderLbRow(row, me, filter) {
+  function renderLbRow(row, me, filter, kpiId) {
     const u = A.userById(row.userId);
     const isMe = row.userId === me.UserID;
     const rankCls = row.rank === 1 ? 'rank-1' : row.rank === 2 ? 'rank-2' : row.rank === 3 ? 'rank-3' : 'rank-other';
@@ -2060,7 +2014,7 @@
         </div>
         <div class="flex flex-col items-end gap-1">
           <div class="flex items-center gap-1">${streakChip}${moveChip}</div>
-          ${!isMe ? `<button data-action="challenge-back" data-user="${row.userId}" data-kpi="KPI005" class="btn-primary text-[10.5px] !py-1 !px-2"><i data-lucide="swords" class="text-[10px]"></i> Challenge</button>` : ''}
+          ${!isMe ? `<button data-action="challenge-back" data-user="${row.userId}" data-kpi="${escapeHtml(kpiId || '')}" class="btn-primary text-[10.5px] !py-1 !px-2"><i data-lucide="swords" class="text-[10px]"></i> Challenge</button>` : ''}
         </div>
       </div>
     `;

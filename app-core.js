@@ -8,14 +8,76 @@
 
   const DATA_SERVICE = window.ArenaDataService || null;
   const SERVICE_ENTITIES = DATA_SERVICE?.MIGRATED_ENTITIES || ['Users', 'Teams', 'KPI_Master', 'Agent_Current'];
+  const WORKFLOW_ENTITIES = DATA_SERVICE?.WORKFLOW_ENTITIES || [
+    'Users',
+    'Agent_Current',
+    'Missions',
+    'Mission_Assignments',
+    'Challenges',
+    'Challenge_Participants',
+    'Challenge_Results',
+    'Rewards',
+    'Reward_Redemptions',
+    'Communications',
+    'Communication_Status',
+    'Learning_Modules',
+    'Learning_Assignments',
+    'Learning_Completion_Status',
+    'PKT_Assessments',
+    'PKT_Questions',
+    'PKT_Attempts',
+    'Coaching',
+    'Recognition',
+    'Commercial_Verification',
+    'TL_Manager_Verification',
+    'Points_Ledger',
+    'XP_Ledger',
+  ];
   const SERVICE_STATE_KEYS = {
     Users: 'users',
     Teams: 'teams',
+    Processes: 'processes',
     KPI_Master: 'kpis',
+    Performance_Data: 'performance',
+    Daily_Agent_Score: 'dailyScore',
     Agent_Current: 'agentCurrent',
+    Leaderboard: 'leaderboard',
+    Badges: 'badges',
+    Agent_Badges: 'agentBadges',
+    SLA_Commercial_Rules: 'slaRules',
+    Penalty_Reward_Slabs: 'slabs',
+    Commercial_Exposure: 'exposure',
+    What_If_Scenarios: 'whatIf',
+    Learning_Points_Rules: 'pointsRules',
+    Points_Ledger: 'pointsLedger',
+    XP_Ledger: 'xpLedger',
+    Missions: 'missions',
+    Mission_Assignments: 'missionAssignments',
+    Challenges: 'challenges',
+    Challenge_Participants: 'challengeParticipants',
+    Challenge_Results: 'challengeResults',
+    Rewards: 'rewards',
+    Reward_Redemptions: 'redemptions',
+    Communications: 'communications',
+    Communication_Status: 'communicationStatus',
+    Learning_Modules: 'modules',
+    Learning_Assignments: 'assignments',
+    Learning_Completion_Status: 'completion',
+    PKT_Assessments: 'pkts',
+    PKT_Questions: 'pktQuestions',
+    PKT_Attempts: 'pktAttempts',
+    Coaching: 'coaching',
+    Recognition: 'recognition',
+    Commercial_Verification: 'verification',
+    TL_Manager_Verification: 'tlVerification',
   };
+  const UI_STATE_KEYS = [
+    'role', 'activeUserId', 'page', 'drillModule', 'drillKpi', 'whatIfRule',
+    'filters', 'challengeBucket', 'challengeTheme', 'missionFilter', 'storeCategory',
+    'lbFilter', 'lbKpi', 'mgrWhatIfKpi', 'mgrWhatIfImprove',
+  ];
   const LS_KEY = 'arena_state_clover_medicare_v1';
-  const STORAGE_VERSION = 7;
+  const STORAGE_VERSION = 8;
   // Wipe any legacy state from earlier prototype iterations.
   ['arena_training_state_v1', 'arena_state_v2', 'arena_state_v3', 'arena_state_v4', 'arena_state_v5', 'arena_state_v6'].forEach(k => {
     try { localStorage.removeItem(k); } catch (e) { /**/ }
@@ -40,18 +102,32 @@
     return next;
   }
 
-  function bootstrapState(snapshot) {
-    const cached = localStorage.getItem(LS_KEY);
-    if (cached) {
-      try {
-        const p = JSON.parse(cached);
-        if (p && p.__v === STORAGE_VERSION) return overlayServiceEntities(p, snapshot);
-      } catch (e) { /**/ }
+  function readStoredUiState() {
+    try {
+      const cached = localStorage.getItem(LS_KEY);
+      if (!cached) return null;
+      const parsed = JSON.parse(cached);
+      return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch (e) {
+      return null;
     }
-    return {
+  }
+
+  function applyStoredUiState(base, stored) {
+    if (!stored) return base;
+    const next = Object.assign({}, base);
+    for (const key of UI_STATE_KEYS) {
+      if (stored[key] !== undefined) next[key] = clone(stored[key]);
+    }
+    next.__v = STORAGE_VERSION;
+    return next;
+  }
+
+  function bootstrapState(snapshot) {
+    const base = {
       __v: STORAGE_VERSION,
       role: 'Agent',
-      activeUserId: 'AG001',
+      activeUserId: null,
       page: 'home',
 
       // identity & org
@@ -129,22 +205,27 @@
 
       // leaderboard view state
       lbFilter: 'team',          // team | process | kpi | weekly | monthly | challenge
-      lbKpi: 'KPI005',           // selected KPI when lbFilter === 'kpi'
+      lbKpi: null,               // selected configurable KPI when lbFilter === 'kpi'
 
       // manager command center state
-      mgrWhatIfKpi: 'KPI005',    // active KPI for the inline what-if widget
+      mgrWhatIfKpi: null,        // active configurable KPI for the inline what-if widget
       mgrWhatIfImprove: 1.0,     // selected improvement assumption for Manager What-If
     };
+    const firstAgent = base.users.find(u => u.Role === 'Agent' && isActiveUserRecord(u)) || base.users.find(isActiveUserRecord);
+    if (firstAgent) {
+      base.role = firstAgent.Role || base.role;
+      base.activeUserId = firstAgent.UserID;
+    }
+    return applyStoredUiState(base, readStoredUiState());
   }
 
-  let state = null;
+  let state = bootstrapState(window.SEED_DATA || {});
+  let lastWorkflowFingerprint = '';
 
-  // Hydrate simulation maps from seeded assignments/participants on first load
+  // Derive render-only maps from persisted assignment/participant rows.
   function hydrateSimulationFromSeed() {
-    if (!state.missionAssignments?.length) return;
-    if (Object.keys(state.missionProgress || {}).length) return; // already hydrated
     state.missionProgress = {};
-    for (const ma of state.missionAssignments) {
+    for (const ma of state.missionAssignments || []) {
       if (!state.missionProgress[ma.Mission_ID]) state.missionProgress[ma.Mission_ID] = {};
       state.missionProgress[ma.Mission_ID][ma.UserID] = {
         progress: ma.Progress || 0,
@@ -156,8 +237,9 @@
     for (const cp of state.challengeParticipants || []) {
       if (!state.challengeStatus[cp.Challenge_ID]) state.challengeStatus[cp.Challenge_ID] = { status: 'Active', acceptedBy: [], rejectedBy: [], winnerId: null };
       const cs = state.challengeStatus[cp.Challenge_ID];
-      if (cp.Status === 'Accepted' || cp.Status === 'Completed') cs.acceptedBy.push(cp.UserID);
-      else if (cp.Status === 'Declined') cs.rejectedBy.push(cp.UserID);
+      const status = String(cp.Status || '').toLowerCase();
+      if (status === 'accepted' || status === 'completed') cs.acceptedBy.push(cp.UserID);
+      else if (status === 'declined') cs.rejectedBy.push(cp.UserID);
     }
     for (const cr of state.challengeResults || []) {
       const cs = state.challengeStatus[cr.Challenge_ID] || (state.challengeStatus[cr.Challenge_ID] = { status: 'Active', acceptedBy: [], rejectedBy: [], winnerId: null });
@@ -165,7 +247,48 @@
       cs.winnerId = cr.Winner_UserID;
     }
   }
-  function persist() { if (!state) return; try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch (e) { /**/ } }
+  function uiStateSnapshot() {
+    const payload = { __v: STORAGE_VERSION };
+    for (const key of UI_STATE_KEYS) payload[key] = clone(state[key]);
+    return payload;
+  }
+
+  function workflowSnapshot() {
+    const snapshot = {};
+    for (const entity of WORKFLOW_ENTITIES) {
+      const key = SERVICE_STATE_KEYS[entity];
+      if (key && Array.isArray(state?.[key])) snapshot[entity] = clone(state[key]);
+    }
+    return snapshot;
+  }
+
+  function setWorkflowBaseline() {
+    lastWorkflowFingerprint = state ? JSON.stringify(workflowSnapshot()) : '';
+  }
+
+  function persistWorkflowIfChanged(reason) {
+    if (!state || !DATA_SERVICE?.persistWorkflowState) return;
+    const snapshot = workflowSnapshot();
+    const fingerprint = JSON.stringify(snapshot);
+    if (fingerprint === lastWorkflowFingerprint) return;
+    lastWorkflowFingerprint = fingerprint;
+    DATA_SERVICE.persistWorkflowState(snapshot, {
+      actorUserId: state.activeUserId,
+      reason: reason || 'app-state-mutation',
+    }).catch((error) => {
+      console.warn('Ripple workflow persistence failed', error);
+      toast('Workflow changes are queued locally and will retry when sync is available.', 'warn', { icon: 'cloud-off' });
+    });
+  }
+
+  function persist(reason) {
+    if (!state) return;
+    try { localStorage.setItem(LS_KEY, JSON.stringify(uiStateSnapshot())); } catch (e) { /**/ }
+    persistWorkflowIfChanged(reason);
+  }
+
+  hydrateSimulationFromSeed();
+  setWorkflowBaseline();
 
   // ---- Lookups ------------------------------------------------------------
   function userById(id) { return state.users.find(u => u.UserID === id); }
@@ -180,9 +303,184 @@
   function pktForModule(moduleId) { return state.pkts.find(p => p.Module_ID === moduleId); }
   function questionsForPkt(pktId) { return state.pktQuestions.filter(q => q.PKT_ID === pktId); }
 
-  function teamMembers(teamId) { return state.users.filter(u => u.Role === 'Agent' && u.Status === 'Active' && u.TeamID === teamId); }
-  function processMembers(processId) { return state.users.filter(u => u.Role === 'Agent' && u.Status === 'Active' && u.ProcessID === processId); }
-  function allAgents() { return state.users.filter(u => u.Role === 'Agent' && u.Status === 'Active'); }
+  function canonicalDataKey(key) {
+    return String(key || '')
+      .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+      .replace(/[^A-Za-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .toLowerCase();
+  }
+
+  function fieldValue(row, candidates) {
+    if (!row) return undefined;
+    for (const key of candidates) {
+      if (Object.prototype.hasOwnProperty.call(row, key)) return row[key];
+    }
+    const wanted = new Set(candidates.map(canonicalDataKey));
+    const actual = Object.keys(row).find((key) => wanted.has(canonicalDataKey(key)));
+    return actual ? row[actual] : undefined;
+  }
+
+  function parseBooleanFlag(value) {
+    if (value == null || value === '') return null;
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return value !== 0;
+    const text = String(value).trim().toLowerCase();
+    if (['true', 'yes', 'y', '1', 'visible', 'enabled', 'active'].includes(text)) return true;
+    if (['false', 'no', 'n', '0', 'hidden', 'disabled', 'inactive', 'retired'].includes(text)) return false;
+    return null;
+  }
+
+  function normalizeRoleName(role) {
+    const text = String(role || '').trim().toLowerCase().replace(/[_-]+/g, ' ');
+    if (text === 'tl' || text === 'team lead' || text === 'teamlead') return 'Team Lead';
+    if (text === 'manager' || text === 'mgr') return 'Manager';
+    if (text === 'admin') return 'Admin';
+    return 'Agent';
+  }
+
+  function isActiveKpi(kpi) {
+    if (!kpi) return false;
+    const active = parseBooleanFlag(fieldValue(kpi, ['Is_Active', 'Active', 'is_active']));
+    if (active === false) return false;
+    const status = String(fieldValue(kpi, ['Status', 'KPI_Status']) || '').trim().toLowerCase();
+    return !['inactive', 'disabled', 'retired', 'archived'].includes(status);
+  }
+
+  function kpiText(kpi) {
+    return [
+      fieldValue(kpi, ['KPI_Name', 'kpi_name']),
+      fieldValue(kpi, ['KPI_Type', 'kpi_type']),
+      fieldValue(kpi, ['Description', 'KPI_Description', 'Business_Definition']),
+      fieldValue(kpi, ['Unit', 'unit']),
+    ].filter(Boolean).join(' ').toLowerCase();
+  }
+
+  function isFinancialKpi(kpi) {
+    const type = String(fieldValue(kpi, ['KPI_Type', 'kpi_type']) || '').toLowerCase();
+    const name = String(fieldValue(kpi, ['KPI_Name', 'kpi_name']) || '').toLowerCase();
+    const unit = String(fieldValue(kpi, ['Unit', 'unit']) || '').trim();
+    return type.includes('financial')
+      || unit === '$'
+      || /\b(cost|cpa|acquisition|commercial|penalty|reward)\b/.test(name)
+      || /\benrollment value\b/.test(name);
+  }
+
+  function isAgentOwnedKpi(kpi) {
+    if (!kpi || isFinancialKpi(kpi)) return false;
+    const text = kpiText(kpi);
+    if (/program-level|account-level|executive/.test(text)) return false;
+    if (/ctm rate|per 1,000|shrinkage/.test(text)) return false;
+    return true;
+  }
+
+  function kpiVisibleFlag(kpi, role) {
+    const roleName = normalizeRoleName(role);
+    const fields = roleName === 'Agent'
+      ? ['Visible_Agent', 'Agent_Visible', 'Agent', 'visible_agent']
+      : roleName === 'Team Lead'
+        ? ['Visible_TL', 'Visible_Team_Lead', 'Visible_TeamLead', 'TL_Visible', 'Team_Lead_Visible', 'TeamLead_Visible', 'TL', 'visible_team_lead']
+        : roleName === 'Manager'
+          ? ['Visible_Manager', 'Manager_Visible', 'Manager', 'visible_manager']
+          : [];
+    for (const key of fields) {
+      const parsed = parseBooleanFlag(fieldValue(kpi, [key]));
+      if (parsed !== null) return parsed;
+    }
+    return null;
+  }
+
+  function kpiAppliesToProcess(kpi, processId) {
+    const raw = fieldValue(kpi, ['Applicability', 'Process_Applicability', 'ProcessID', 'Process_ID']);
+    if (!raw || String(raw).trim().toLowerCase() === 'all') return true;
+    if (!processId) return true;
+    const proc = processById(processId);
+    const accepted = String(raw).split(/[|,;/]+/).map((part) => part.trim().toLowerCase()).filter(Boolean);
+    const candidates = [processId, proc?.ProcessID, proc?.ProcessName, proc?.ProcessType]
+      .filter(Boolean)
+      .map((value) => String(value).trim().toLowerCase());
+    return accepted.some((value) => candidates.includes(value));
+  }
+
+  function kpiVisibleForRole(kpiOrId, role, options) {
+    const kpi = typeof kpiOrId === 'string' ? kpiById(kpiOrId) : kpiOrId;
+    const roleName = normalizeRoleName(role);
+    if (!isActiveKpi(kpi) || !kpiAppliesToProcess(kpi, options?.processId)) return false;
+    if (roleName === 'Agent' && !isAgentOwnedKpi(kpi)) return false;
+    const configured = kpiVisibleFlag(kpi, roleName);
+    if (configured !== null) return configured;
+    return roleName !== 'Agent' || isAgentOwnedKpi(kpi);
+  }
+
+  function kpiMetricGroup(kpiOrId) {
+    const kpi = typeof kpiOrId === 'string' ? kpiById(kpiOrId) : kpiOrId;
+    if (!kpi) return 'outcome';
+    if (isFinancialKpi(kpi)) return 'financial';
+    const type = String(fieldValue(kpi, ['KPI_Type', 'kpi_type']) || '').toLowerCase();
+    const name = String(fieldValue(kpi, ['KPI_Name', 'kpi_name']) || '').toLowerCase();
+    if (/(sales|revenue quality|production|call effectiveness)/.test(type)) return 'outcome';
+    if (/ctm|complaint/.test(name)) return 'outcome';
+    if (/(quality|workforce|compliance|operational|adherence|utilization|handle time)/.test(type + ' ' + name)) return 'operational';
+    return 'outcome';
+  }
+
+  function numericField(row, candidates, fallback) {
+    const value = Number(fieldValue(row, candidates));
+    return Number.isFinite(value) ? value : fallback;
+  }
+
+  function kpiDisplayRank(kpi) {
+    const explicit = numericField(kpi, ['Display_Order', 'Sort_Order', 'Sequence', 'KPI_Order', 'Priority_Order'], null);
+    if (explicit != null) return explicit;
+    const groupRank = { operational: 100, outcome: 200, financial: 300 }[kpiMetricGroup(kpi)] || 400;
+    const weight = numericField(kpi, ['Weightage', 'Weight', 'weightage'], 0);
+    return groupRank - weight;
+  }
+
+  function sortKpisForDisplay(rows) {
+    return (rows || []).slice().sort((a, b) => {
+      const rank = kpiDisplayRank(a) - kpiDisplayRank(b);
+      if (rank) return rank;
+      return String(fieldValue(a, ['KPI_Name', 'KPI_ID']) || '').localeCompare(String(fieldValue(b, ['KPI_Name', 'KPI_ID']) || ''));
+    });
+  }
+
+  function kpisForRole(role, options) {
+    const opts = options || {};
+    return sortKpisForDisplay((state.kpis || []).filter((kpi) => {
+      if (!kpiVisibleForRole(kpi, role, opts)) return false;
+      return !opts.group || kpiMetricGroup(kpi) === opts.group;
+    }));
+  }
+
+  function kpiIdsForRole(role, options) {
+    return kpisForRole(role, options).map((kpi) => kpi.KPI_ID).filter(Boolean);
+  }
+
+  function sortKpiRowsForDisplay(rows) {
+    return (rows || []).slice().sort((a, b) => {
+      const ka = kpiById(a.KPI_ID) || {};
+      const kb = kpiById(b.KPI_ID) || {};
+      const rank = kpiDisplayRank(ka) - kpiDisplayRank(kb);
+      if (rank) return rank;
+      return String(a.KPI_ID || '').localeCompare(String(b.KPI_ID || ''));
+    });
+  }
+
+  function visibleKpiRowsForRole(rows, role, options) {
+    return sortKpiRowsForDisplay((rows || []).filter((row) => kpiVisibleForRole(row.KPI_ID, role, options)));
+  }
+
+  function isActiveUserRecord(user) {
+    const status = String(user?.Status || '').trim().toLowerCase();
+    return user && user.Active !== false && user.Is_Active !== false && user.is_active !== false
+      && !['inactive', 'disabled', 'deactivated'].includes(status);
+  }
+  function activeUsersForRole(role) { return state.users.filter(u => u.Role === role && isActiveUserRecord(u)); }
+  function firstActiveUserForRole(role) { return activeUsersForRole(role)[0] || state.users.find(isActiveUserRecord) || null; }
+  function teamMembers(teamId) { return state.users.filter(u => u.Role === 'Agent' && isActiveUserRecord(u) && u.TeamID === teamId); }
+  function processMembers(processId) { return state.users.filter(u => u.Role === 'Agent' && isActiveUserRecord(u) && u.ProcessID === processId); }
+  function allAgents() { return state.users.filter(u => u.Role === 'Agent' && isActiveUserRecord(u)); }
 
   function audienceAgents(audienceType, audienceId) {
     if (audienceType === 'Account') return allAgents();
@@ -378,25 +676,59 @@
   }
 
   // missions
+  function missionAssignmentFor(missionId, userId) {
+    return (state.missionAssignments || []).find(ma => ma.Mission_ID === missionId && ma.UserID === userId);
+  }
+
+  function ensureMissionAssignment(missionId, userId) {
+    state.missionAssignments = state.missionAssignments || [];
+    let assignment = missionAssignmentFor(missionId, userId);
+    if (assignment) return assignment;
+    const u = userById(userId);
+    assignment = {
+      Assignment_ID: uid('MA'),
+      Mission_ID: missionId,
+      UserID: userId,
+      TeamID: u?.TeamID || null,
+      Joined_Date: todayStr(),
+      Progress: 0,
+      Status: 'Active',
+      Points_Earned: 0,
+    };
+    state.missionAssignments.unshift(assignment);
+    return assignment;
+  }
+
   function joinMission(missionId, userId) {
     const m = missionById(missionId); if (!m) return;
     if (!state.missionProgress[missionId]) state.missionProgress[missionId] = {};
     if (state.missionProgress[missionId][userId]?.status === 'Active') return toast('Already on this mission', 'info');
-    state.missionProgress[missionId][userId] = { progress: 0.05, status: 'Active', joined: todayStr() };
+    const assignment = ensureMissionAssignment(missionId, userId);
+    assignment.Progress = Math.max(assignment.Progress || 0, 0.05);
+    assignment.Status = 'Active';
+    assignment.Joined_Date = assignment.Joined_Date || todayStr();
+    state.missionProgress[missionId][userId] = { progress: assignment.Progress, status: assignment.Status, joined: assignment.Joined_Date };
     logActivity(`Joined mission "${m.Mission_Name}"`, userById(userId)?.Name, 'mission');
     toast(`Joined "${m.Mission_Name}"`, 'violet', { icon: 'flag' });
-    persist();
+    persist('mission-join');
   }
 
   function progressMission(missionId, userId, delta) {
     const m = missionById(missionId); if (!m) return;
     const slot = state.missionProgress[missionId]?.[userId];
     if (!slot) return joinMission(missionId, userId);
+    const assignment = ensureMissionAssignment(missionId, userId);
     slot.progress = Math.min(1, (slot.progress || 0) + (delta || 0.2));
+    assignment.Progress = slot.progress;
+    assignment.Status = slot.status || assignment.Status || 'Active';
     if (slot.progress >= 1 && slot.status !== 'Completed') {
       slot.status = 'Completed';
+      assignment.Status = 'Completed';
+      assignment.Completed_Date = todayStr();
       const pts = m.Reward_Points || 200;
       const xp = (m.XP_Reward != null && m.XP_Reward !== '') ? Number(m.XP_Reward) : Math.round(pts * 0.5);
+      assignment.Points_Earned = pts;
+      assignment.XP_Earned = xp;
       applyPointsToUser(userId, pts, xp);
       const badge = state.badges.find(b => b.Badge_ID === m.Badge_ID);
       logActivity(`Completed mission "${m.Mission_Name}" — +${pts} pts · +${xp} progress${badge ? ` · ${badge.Badge_Name}` : ''}`, userById(userId)?.Name, 'mission');
@@ -405,7 +737,7 @@
     } else {
       toast(`Progress +${Math.round((delta || 0.2) * 100)}% — ${Math.round(slot.progress * 100)}% complete`, 'info', { icon: 'trending-up' });
     }
-    persist();
+    persist('mission-progress');
   }
 
   // challenges
@@ -415,26 +747,58 @@
     }
     return state.challengeStatus[c.Challenge_ID];
   }
+
+  function challengeParticipantFor(challengeId, userId) {
+    return (state.challengeParticipants || []).find(p => p.Challenge_ID === challengeId && p.UserID === userId);
+  }
+
+  function ensureChallengeParticipant(c, userId) {
+    state.challengeParticipants = state.challengeParticipants || [];
+    let participant = challengeParticipantFor(c.Challenge_ID, userId);
+    if (participant) return participant;
+    const side = c.Participant_One === userId ? 'A' : c.Participant_Two === userId ? 'B' : 'Participant';
+    participant = {
+      Participant_ID: uid('CP'),
+      Challenge_ID: c.Challenge_ID,
+      UserID: userId,
+      Side: side,
+      Joined_Date: todayStr(),
+      Status: 'Pending',
+      Entry_Paid: 0,
+    };
+    state.challengeParticipants.push(participant);
+    return participant;
+  }
+
   function acceptChallenge(challengeId, userId) {
     const c = challengeById(challengeId); if (!c) return;
     const cs = ensureChallengeStatus(c);
+    const participant = ensureChallengeParticipant(c, userId);
+    const alreadyAccepted = cs.acceptedBy.includes(userId) || String(participant.Status || '').toLowerCase() === 'accepted';
     if (!cs.acceptedBy.includes(userId)) cs.acceptedBy.push(userId);
     cs.rejectedBy = cs.rejectedBy.filter(x => x !== userId);
     cs.status = 'Active';
-    deductPointsFromUser(userId, c.Entry_Points || 0);
+    participant.Status = 'Accepted';
+    participant.Joined_Date = participant.Joined_Date || todayStr();
+    if (!alreadyAccepted) {
+      participant.Entry_Paid = c.Entry_Points || 0;
+      deductPointsFromUser(userId, c.Entry_Points || 0);
+    }
     logActivity(`Accepted challenge "${c.Challenge_Name}"`, userById(userId)?.Name, 'challenge');
     toast(`Challenge accepted — entry ${c.Entry_Points} pts contributed · reward pool ${c.Reward_Pool} pts`, 'violet', { icon: 'swords' });
-    persist();
+    persist('challenge-accept');
   }
   function rejectChallenge(challengeId, userId) {
     const c = challengeById(challengeId); if (!c) return;
     const cs = ensureChallengeStatus(c);
+    const participant = ensureChallengeParticipant(c, userId);
     if (!cs.rejectedBy.includes(userId)) cs.rejectedBy.push(userId);
     cs.acceptedBy = cs.acceptedBy.filter(x => x !== userId);
     if (c.Participant_One === userId || c.Participant_Two === userId) cs.status = 'Declined';
+    participant.Status = 'Declined';
     logActivity(`Declined challenge "${c.Challenge_Name}"`, userById(userId)?.Name, 'challenge');
     toast(`Challenge declined`, 'warn', { icon: 'shield-off' });
-    persist();
+    persist('challenge-reject');
   }
   function settleChallenge(challengeId, winnerId) {
     const c = challengeById(challengeId); if (!c) return;
@@ -446,7 +810,7 @@
     const u = userById(winnerId);
     logActivity(`Challenge "${c.Challenge_Name}" submitted for TL validation — claimed winner ${u?.Name || winnerId}`, userById(state.activeUserId)?.Name, 'challenge');
     toast(`Win submitted to TL for validation · ${u?.Name || winnerId}`, 'violet', { icon: 'shield-check' });
-    persist();
+    persist('challenge-submit-result');
   }
 
   function validateChallenge(challengeId, approved) {
@@ -469,7 +833,7 @@
       logActivity(`Rejected challenge result "${c.Challenge_Name}"`, userById(state.activeUserId)?.Name, 'challenge');
       toast('Challenge result rejected', 'warn', { icon: 'shield-x' });
     }
-    persist();
+    persist('challenge-validation');
   }
 
   function createChallenge({ name, type, p1, p2, kpiId, end, entry, pool }) {
@@ -510,7 +874,7 @@
 
     logActivity(`Created challenge "${name}"`, userById(creator)?.Name, 'challenge');
     toast(`Challenge created · awaiting opponent`, 'violet', { icon: 'swords' });
-    persist();
+    persist('challenge-create');
     return c;
   }
 
@@ -536,7 +900,7 @@
       Redemption_Date: todayStr(),
       Points_Spent: r.Points_Required,
       Status: status,
-      Fulfilment_Owner: owner || 'TL001',
+      Fulfilment_Owner: owner || firstActiveUserForRole('Team Lead')?.UserID || null,
     };
     state.redemptions.unshift(redemption);
 
@@ -560,7 +924,7 @@
       toast(`Redeemed ${r.Reward_Name}${status === 'Pending Approval' ? ' · pending approval' : ' · instant'}`, 'gold', { icon: 'gift' });
       confetti(28);
     }
-    persist();
+    persist('reward-redeem');
     return redemption;
   }
 
@@ -574,7 +938,7 @@
     const u = userById(rd.UserID);
     logActivity(`Approved reward "${r?.Reward_Name}" for ${u?.Name}`, userById(state.activeUserId)?.Name, 'reward');
     toast(`Approved · ${r?.Reward_Name} for ${u?.Name}`, 'success', { icon: 'check-check' });
-    persist();
+    persist('reward-approve');
   }
 
   function rejectRedemption(redemptionId) {
@@ -603,7 +967,7 @@
     const u = userById(rd.UserID);
     logActivity(`Rejected reward "${r.Reward_Name}" for ${u?.Name} · ${rd.Points_Spent} pts refunded`, userById(state.activeUserId)?.Name, 'reward');
     toast(`Rejected · ${rd.Points_Spent} pts refunded to ${u?.Name}`, 'warn', { icon: 'rotate-ccw' });
-    persist();
+    persist('reward-reject');
   }
 
   // training (existing module — kept compatible)
@@ -620,7 +984,7 @@
       Priority: opts.priority,
       Audience_Type: opts.audienceType,
       Audience_ID: opts.audienceId || 'CLOVER_MA',
-      Published_By: me?.UserID || 'MGR001',
+      Published_By: me?.UserID || firstActiveUserForRole('Manager')?.UserID || null,
       Content_Format: opts.contentFormat,
       Description: opts.description,
       Content_Link: opts.contentLink || '',
@@ -675,14 +1039,14 @@
     }
     logActivity(`${opts.moduleType} "${opts.title}" assigned to ${targets.length} agent(s)`, me?.Name, 'training');
     toast(`${opts.moduleType} published · ${targets.length} agent${targets.length === 1 ? '' : 's'}`, 'success', { icon: 'send' });
-    persist();
+    persist('learning-module-create');
   }
 
   function markViewed(assignmentId) {
     const c = findCompletion(assignmentId); if (!c || c.Viewed === 'Yes') return;
     c.Viewed = 'Yes'; c.Status = c.Status === 'Not Started' ? 'In Progress' : c.Status;
     const a = findAssignment(assignmentId); if (a) a.Assignment_Status = 'In Progress';
-    toast('Module opened', 'info', { icon: 'eye' }); persist();
+    toast('Module opened', 'info', { icon: 'eye' }); persist('learning-view');
   }
   function acknowledgeAssignment(assignmentId) {
     const c = findCompletion(assignmentId); if (!c || c.Acknowledged === 'Yes') return;
@@ -695,7 +1059,7 @@
     applyPointsToUser(c.UserID, pts, xp);
     toast(`Acknowledged · +${pts} pts`, 'gold', { icon: 'check-check' });
     logActivity(`Acknowledged "${m?.Title}"`, userById(c.UserID)?.Name, 'training');
-    persist();
+    persist('learning-acknowledge');
   }
   function completeAssignment(assignmentId) {
     const c = findCompletion(assignmentId); if (!c || c.Completed === 'Yes') return;
@@ -709,7 +1073,7 @@
     toast(`Training complete · +${pts} pts · +${xp} progress${m?.Badge_Unlock ? ` · ${m.Badge_Unlock}` : ''}`, 'gold', { icon: 'graduation-cap' });
     confetti(20);
     logActivity(`Completed "${m?.Title}"`, userById(c.UserID)?.Name, 'training');
-    persist();
+    persist('learning-complete');
   }
 
   function submitPktAttempt(moduleId, userId, answers) {
@@ -754,14 +1118,14 @@
       toast(`PKT ${score}% · need ${pkt.Pass_Score}% to pass`, 'warn', { icon: 'graduation-cap' });
     }
     logActivity(`PKT attempt ${attemptNo} on "${moduleById(moduleId)?.Title}" — ${result} (${score}%)`, userById(userId)?.Name, 'training');
-    persist();
+    persist('pkt-attempt');
   }
 
   function sendReminder(moduleId, userId) {
     const m = moduleById(moduleId); const u = userById(userId);
     logActivity(`Reminder sent for "${m?.Title}" → ${u?.Name}`, userById(state.activeUserId)?.Name, 'reminder');
     toast(`Reminder → ${u?.Name}`, 'info', { icon: 'bell-ring' });
-    persist();
+    persist('training-reminder');
   }
   function bulkRemindOverdue(moduleId) {
     const targets = state.assignments.filter(a => a.Module_ID === moduleId).filter(a => {
@@ -782,7 +1146,7 @@
     if (comments) row.Comments = comments;
     logActivity(`Verification → ${status} for ${row.Entity_Name} · ${row.KPI_Name}`, userById(state.activeUserId)?.Name, 'verification');
     toast(`Marked ${status}`, status === 'Verified' ? 'success' : 'info', { icon: 'shield-check' });
-    persist();
+    persist('verification-update');
   }
 
   // ---- Layout shell -------------------------------------------------------
@@ -873,7 +1237,7 @@
               `).join('')}
             </div>
             <select id="user-picker" class="!text-[12px] !py-1.5">
-              ${state.users.filter(u => u.Role === state.role && u.Status === 'Active').map(u => `<option value="${u.UserID}" ${u.UserID === state.activeUserId ? 'selected' : ''}>${u.Name}</option>`).join('')}
+              ${activeUsersForRole(state.role).map(u => `<option value="${u.UserID}" ${u.UserID === state.activeUserId ? 'selected' : ''}>${u.Name}</option>`).join('')}
             </select>
             <div class="flex items-center gap-2 mt-2 text-[10px] text-arena-muted">
               <i data-lucide="map-pin" class="text-[10px]"></i> ${me?.Location || ''} · ${me?.UserID || ''}
@@ -907,7 +1271,7 @@
             `).join('')}
           </div>
           <select id="mobile-user-picker" class="mobile-user-select" aria-label="Select active profile">
-            ${state.users.filter(u => u.Role === state.role && u.Status === 'Active').map(u => `<option value="${u.UserID}" ${u.UserID === state.activeUserId ? 'selected' : ''}>${u.Name}${u.TeamID ? ` · ${teamById(u.TeamID)?.TeamName || u.TeamID}` : ''}</option>`).join('')}
+            ${activeUsersForRole(state.role).map(u => `<option value="${u.UserID}" ${u.UserID === state.activeUserId ? 'selected' : ''}>${u.Name}${u.TeamID ? ` · ${teamById(u.TeamID)?.TeamName || u.TeamID}` : ''}</option>`).join('')}
           </select>
         </div>
       </header>
@@ -916,13 +1280,15 @@
         ${renderPage()}
       </main>
 
-      <nav class="mobile-bottom-nav">
-        ${mobileTabs.map(n => `
-          <button data-nav="${n.id}" class="${state.page === n.id ? 'text-arena-gold' : 'text-arena-muted'} flex flex-col items-center justify-center gap-0.5 py-1.5 rounded-xl">
+      <nav class="mobile-bottom-nav" aria-label="Primary mobile navigation">
+        ${mobileTabs.map(n => {
+          const active = state.page === n.id;
+          return `
+          <button data-nav="${n.id}" aria-label="${n.label}" aria-current="${active ? 'page' : 'false'}" class="${active ? 'active text-arena-gold' : 'text-arena-muted'} flex flex-col items-center justify-center gap-0.5 py-1.5 rounded-xl">
             <i data-lucide="${n.icon}" class="text-[18px]"></i>
             <span class="text-[10px] font-semibold">${n.label.split(' ')[0]}</span>
-          </button>
-        `).join('')}
+          </button>`;
+        }).join('')}
       </nav>
     `;
   }
@@ -1071,7 +1437,7 @@
       const newRole = roleBtn.dataset.role;
       if (newRole !== state.role) {
         state.role = newRole;
-        const first = state.users.find(u => u.Role === newRole && u.Status === 'Active');
+        const first = activeUsersForRole(newRole)[0];
         if (first) state.activeUserId = first.UserID;
         // sensible default page
         if (newRole === 'Agent') state.page = 'home';
@@ -1197,7 +1563,7 @@
     });
     logActivity(`Recognized ${u.Name} — +${pts} pts · +${xp} progress`, userById(state.activeUserId)?.Name, 'recognition');
     toast(`👏 Recognition · ${u.Name} · +${pts} pts`, 'gold', { icon: 'medal' });
-    confetti(20); persist();
+    confetti(20); persist('recognition-create');
   }
 
   function createCoachingNote({ userId, kpiId, triggerReason, note, dueDate }) {
@@ -1218,7 +1584,7 @@
     state.coaching.unshift(co);
     logActivity(`Coaching note added for ${u.Name} (${kpiById(kpiId)?.KPI_Name || kpiId})`, tl?.Name, 'coaching');
     toast(`Coaching note saved for ${u.Name}`, 'violet', { icon: 'message-square-heart' });
-    persist();
+    persist('coaching-create');
   }
 
   function resolveCoaching(coachingId) {
@@ -1229,7 +1595,7 @@
     const u = userById(co.UserID);
     logActivity(`Coaching resolved for ${u?.Name}`, userById(state.activeUserId)?.Name, 'coaching');
     toast(`Coaching resolved · ${u?.Name}`, 'success', { icon: 'check-check' });
-    persist();
+    persist('coaching-resolve');
   }
 
   function onChange(e) {
@@ -1269,11 +1635,66 @@
       : {};
     state = bootstrapState(snapshot);
     hydrateSimulationFromSeed();
+    setWorkflowBaseline();
     return state;
   }
 
+  let workflowRefreshInFlight = false;
+  let lastWorkflowRefreshAt = 0;
+
+  async function refreshWorkflowFromDataService(options) {
+    const opts = options || {};
+    if (!state || !DATA_SERVICE?.refreshEntities || workflowRefreshInFlight) return;
+    const now = Date.now();
+    if (!opts.force && now - lastWorkflowRefreshAt < 15000) return;
+    workflowRefreshInFlight = true;
+    try {
+      const snapshot = await DATA_SERVICE.refreshEntities(SERVICE_ENTITIES, { forceRefresh: true, source: opts.source || 'refresh' });
+      state = overlayServiceEntities(state, snapshot);
+      hydrateSimulationFromSeed();
+      ensureActiveProfile();
+      setWorkflowBaseline();
+      lastWorkflowRefreshAt = Date.now();
+      render();
+      if (!opts.silent) toast('Workflow data refreshed from the shared API state.', 'info', { icon: 'refresh-cw' });
+    } catch (error) {
+      console.warn('Ripple workflow refresh failed', error);
+    } finally {
+      workflowRefreshInFlight = false;
+    }
+  }
+
+  function installWorkflowRefreshHandlers() {
+    if (!window.addEventListener) return;
+    window.addEventListener('arena:data-conflict', (event) => {
+      const detail = event.detail || {};
+      toast(detail.message || 'Workflow conflict detected. Refresh before saving again.', 'warn', { icon: 'git-compare-arrows' });
+    });
+    window.addEventListener('arena:data-refresh-needed', (event) => {
+      refreshWorkflowFromDataService({ force: true, source: event.detail?.source || 'cross-session' });
+    });
+    window.addEventListener('focus', () => {
+      refreshWorkflowFromDataService({ silent: true, source: 'window-focus' });
+    });
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') refreshWorkflowFromDataService({ silent: true, source: 'visibility' });
+    });
+  }
+
+  function ensureActiveProfile() {
+    const current = userById(state.activeUserId);
+    if (current && current.Role === state.role && isActiveUserRecord(current)) return;
+    const replacement = activeUsersForRole(state.role)[0] || state.users.find(isActiveUserRecord);
+    if (!replacement) return;
+    state.role = replacement.Role || state.role;
+    state.activeUserId = replacement.UserID;
+    if (state.role === 'Agent') state.page = 'home';
+    else if (state.role === 'Team Lead') state.page = 'lead-outcomes';
+    else if (state.role === 'Manager') state.page = 'mgr-account';
+  }
+
   async function bootApp(options) {
-    const hadCachedState = !!localStorage.getItem(LS_KEY);
+    const hadCachedState = !!readStoredUiState();
     render();
     try {
       await loadStateFromDataService(options);
@@ -1283,15 +1704,21 @@
       hydrateSimulationFromSeed();
     }
 
-    // Default to Agent role with first agent on first load
     if (!hadCachedState) {
-      state.role = 'Agent';
-      state.activeUserId = 'AG001';
-      state.page = 'home';
+      const firstAgent = activeUsersForRole('Agent')[0] || state.users.find(isActiveUserRecord);
+      state.role = firstAgent?.Role || 'Agent';
+      state.activeUserId = firstAgent?.UserID || null;
+      state.page = state.role === 'Agent' ? 'home'
+        : state.role === 'Team Lead' ? 'lead-outcomes'
+        : state.role === 'Manager' ? 'mgr-account'
+        : 'home';
     }
+    ensureActiveProfile();
     render();
     return state;
   }
+
+  installWorkflowRefreshHandlers();
 
   // ---- Public API ---------------------------------------------------------
   window.Arena = {
@@ -1303,6 +1730,8 @@
     userById, teamById, processById, kpiById, moduleById, missionById, challengeById, badgeByName,
     agentSnapshot, pktForModule, questionsForPkt,
     teamMembers, processMembers, allAgents, audienceAgents, describeAudience,
+    normalizeRoleName, isActiveKpi, isAgentOwnedKpi, isFinancialKpi, kpiVisibleForRole,
+    kpiMetricGroup, kpisForRole, kpiIdsForRole, sortKpisForDisplay, sortKpiRowsForDisplay, visibleKpiRowsForRole,
     performanceByUser, performanceByUserKpi, todaysRowsForUser,
     levelInfo, streakForUser,
     leaderboardForTeam, leaderboardForProcess, leaderboardAccount, teamScoreForUser,

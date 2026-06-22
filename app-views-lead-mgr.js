@@ -35,6 +35,45 @@
   }
   function pct(num, den) { return den ? Math.round((num / den) * 1000) / 10 : 0; }
 
+  function roleForScope(scope) {
+    return scope === 'team' ? 'Team Lead' : 'Manager';
+  }
+
+  function configuredMetricIds(scope, group) {
+    return A.kpiIdsForRole(roleForScope(scope), group ? { group } : {});
+  }
+
+  function kpiNameText(kpi) {
+    return `${kpi?.KPI_Name || ''} ${kpi?.KPI_Type || ''} ${kpi?.Description || ''}`.toLowerCase();
+  }
+
+  function kpiIdsMatching(role, predicate) {
+    return A.kpisForRole(role).filter(predicate).map(k => k.KPI_ID).filter(Boolean);
+  }
+
+  function outcomeDriverIds(role, bucket) {
+    const matchers = {
+      sales: /(conversion|applications? per day|production)/,
+      quality: /(effectuation|fallout|quality)/,
+      compliance: /(cms|ctm|soa|disclosure|call adherence|compliance)/,
+      efficiency: /(handle time|schedule|utilization|shrinkage|eligible call|workforce|efficiency)/,
+    };
+    const rx = matchers[bucket] || /./;
+    const ids = kpiIdsMatching(role, kpi => rx.test(kpiNameText(kpi)) && A.kpiMetricGroup(kpi) !== 'financial');
+    return ids.length ? ids : configuredMetricIds(role === 'Team Lead' ? 'team' : 'account', bucket === 'efficiency' ? 'operational' : 'outcome');
+  }
+
+  function defaultActionKpiId(role) {
+    return A.kpiIdsForRole(role, { group: 'outcome' })[0] || A.kpiIdsForRole(role, { group: 'operational' })[0] || A.kpiIdsForRole(role)[0] || '';
+  }
+
+  function isConfiguredSlaHealthKpi(kpiId, role) {
+    const kpi = A.kpiById(kpiId);
+    if (!A.kpiVisibleForRole(kpi, role)) return false;
+    const linkedRule = (A.state.slaRules || []).some(r => r.KPI_ID === kpiId);
+    return linkedRule && A.kpiMetricGroup(kpi) === 'operational';
+  }
+
 
   function metricHelp(title, definition, formula, use, confidence) {
     return `
@@ -1333,7 +1372,7 @@
 
         <!-- INLINE WHAT-IF SIMULATOR -->
         ${(() => {
-          const widgetKpis = ['KPI014','KPI012','KPI009','KPI010']; // AHT, quality, SOA, disclosures
+          const widgetKpis = configuredMetricIds('account', 'operational').filter(id => isConfiguredSlaHealthKpi(id, 'Manager')).slice(0, 4);
           const activeKpiId = widgetKpis.includes(s.mgrWhatIfKpi) ? s.mgrWhatIfKpi : widgetKpis[0];
           const ruleForKpi = s.slaRules.find(r => r.KPI_ID === activeKpiId);
           const scenarios = ruleForKpi ? s.whatIf.filter(w => w.Rule_ID === ruleForKpi.Rule_ID && w.Scenario_Variance > 0).sort((a, b) => a.Scenario_Variance - b.Scenario_Variance) : [];
@@ -1651,7 +1690,7 @@
 
   function renderMgrWhatIf() {
     const s = A.state;
-    const whatIfRules = s.slaRules.filter(r => ['KPI014','KPI012','KPI006','KPI009','KPI010','KPI013'].includes(r.KPI_ID));
+    const whatIfRules = s.slaRules.filter(r => isConfiguredSlaHealthKpi(r.KPI_ID, 'Manager'));
     const activeKpiId = whatIfRules.some(r => r.KPI_ID === s.mgrWhatIfKpi) ? s.mgrWhatIfKpi : whatIfRules[0]?.KPI_ID;
     const rule = whatIfRules.find(r => r.KPI_ID === activeKpiId) || whatIfRules[0];
     const current = rule ? s.exposure.find(e => e.Entity_Level === 'Account' && e.KPI_ID === rule.KPI_ID) : null;
@@ -2227,14 +2266,19 @@
 
   function outcomeRowsForScope(scope, teamId) {
     const isTL = scope === 'team';
-    const rows = latestRows(scope, teamId).filter(r => !['KPI008','KPI017','KPI018','KPI019','KPI021'].includes(r.KPI_ID));
+    const role = roleForScope(scope);
+    const rows = latestRows(scope, teamId).filter(r => A.kpiVisibleForRole(r.KPI_ID, role) && A.kpiMetricGroup(r.KPI_ID) !== 'financial');
     const basePenalty = isTL
       ? (A.state.exposure || []).filter(e => e.Entity_Level === 'Team' && e.Entity_ID === teamId).reduce((s,e)=>s+(e.Forecast_Penalty||0),0)
       : (A.state.exposure || []).filter(e => e.Entity_Level === 'Account').reduce((s,e)=>s+(e.Forecast_Penalty||0),0);
     const m = clientOutcomeMetrics(scope, basePenalty, rows.length);
+    const effortDrivers = outcomeDriverIds(role, 'quality');
+    const experienceDrivers = outcomeDriverIds(role, 'compliance');
+    const accessDrivers = outcomeDriverIds(role, 'sales');
+    const capacityDrivers = outcomeDriverIds(role, 'efficiency');
     const defs = [
       {
-        id: 'effort', outcome:'Enrollment Friction Index', drivers:['KPI004','KPI011','KPI012','KPI003'], driverText:'Effectuation Quality, Application Accuracy, Plan Match Escalation, Eligible Call Conversion',
+        id: 'effort', outcome:'Enrollment Friction Index', drivers:effortDrivers, driverText:effortDrivers.map(finalKpiName).join(', '),
         clientMetrics:'Repeat contacts, complaint risk, customer service survey signals',
         primary:'Plan Match Escalation', secondary:'Application Accuracy',
         rootCauses:['authorization status follow-up','unclear next step','avoidable transfer'],
@@ -2243,7 +2287,7 @@
         help:['Enrollment Friction Index','How much effort members may experience to get an issue resolved.','Weighted view of Application Accuracy, Effectuation Quality, Plan Match Escalation, Eligible Call Conversion and repeat-contact signals.','Use to select coaching, knowledge, routing or process interventions.', 'Medium']
       },
       {
-        id: 'experience', outcome:'Compliance Quality Index', drivers:['KPI003','KPI005','KPI009','KPI011'], driverText:'Eligible Call Conversion, Quality Score, Disclosure Quality, Application Accuracy',
+        id: 'experience', outcome:'Compliance Quality Index', drivers:experienceDrivers, driverText:experienceDrivers.map(finalKpiName).join(', '),
         clientMetrics:'Courtesy/respect survey items, customer service experience, complaints',
         primary:'Disclosure Quality', secondary:'Eligible Call Conversion',
         rootCauses:['empathy variation','script clarity','resolution confidence'],
@@ -2252,7 +2296,7 @@
         help:['Compliance Quality Index','Roll-up of call quality and post-call survey drivers that influence member experience.','Weighted view of survey and QA signals.','Discuss experience risk without claiming direct Star movement.', 'Medium']
       },
       {
-        id: 'access', outcome:'Eligible Call Access Index', drivers:['KPI001','KPI008','KPI006','KPI012'], driverText:'AHT, Fallout Rate, Schedule Adherence, Plan Match Escalation',
+        id: 'access', outcome:'Eligible Call Access Index', drivers:accessDrivers, driverText:accessDrivers.map(finalKpiName).join(', '),
         clientMetrics:'Speed-to-answer, abandonment, access perception, queue stability',
         primary:'AHT', secondary:'Fallout Rate',
         rootCauses:['peak interval pressure','staffing/adherence gap','routing friction'],
@@ -2261,7 +2305,7 @@
         help:['Eligible Call Access Index','Member difficulty reaching the right help at the right time.','AHT + abandonment + adherence + transfer/access indicators.','Use for capacity, routing and peak interval interventions. AHT is not an individual-agent KPI.', 'Medium-High']
       },
       {
-        id: 'capacity', outcome:'Capacity Stability Index', drivers:['KPI010','KPI002','KPI006'], driverText:'Calls Handled, AHT, Schedule Adherence',
+        id: 'capacity', outcome:'Capacity Stability Index', drivers:capacityDrivers, driverText:capacityDrivers.map(finalKpiName).join(', '),
         clientMetrics:'Cost-to-serve, queue stability, billable volume, service capacity',
         primary:'Calls Handled', secondary:'AHT',
         rootCauses:['volume surge','AHT variance','coverage gap'],
@@ -2272,7 +2316,7 @@
     ];
     if (!isTL) {
       defs.push({
-        id:'commercial', outcome:'Commercial Value Bridge', drivers:['KPI010','KPI008','KPI003'], driverText:'Revenue, Penalty %, Reward Opportunity, Experience Risk',
+        id:'commercial', outcome:'Commercial Value Bridge', drivers:configuredMetricIds('account', 'outcome'), driverText:'Revenue, Penalty %, Reward Opportunity, Experience Risk',
         clientMetrics:'Revenue delivered, penalty exposure, modeled leakage, reward opportunity',
         primary:'Penalty % of revenue', secondary:'Revenue MTD',
         rootCauses:['SLA exposure','repeat-contact leakage','experience driver watch'],
@@ -2473,7 +2517,7 @@
     const me = A.userById(A.state.activeUserId);
     const teamId = isTL ? me?.TeamID : null;
     const title = isTL ? 'SLA/KPI Trends · Team Lead' : 'SLA/KPI Trends · Manager';
-    const kpiIds = ['KPI001','KPI002','KPI003','KPI004','KPI005','KPI006','KPI007','KPI008','KPI010','KPI009','KPI011','KPI012'].filter(id => A.kpiById(id));
+    const kpiIds = configuredMetricIds(scope).filter(id => A.kpiById(id));
     const details = kpiIds.map(id => kpiTrendDetail(scope, teamId, id));
     const access = details.filter(d => ['SOA Compliance Rate','Disclosure Completion Rate','CMS Test Call Score','CTM Rate / 1,000 Enrollments','Call Adherence Rate'].includes(d.name));
     const experience = details.filter(d => ['Overall Conversion Rate','Eligible Call Conversion Rate','Applications Per Day','Effectuation Rate','Fallout Rate','RFI Rate','Quality Assurance Score'].includes(d.name));
@@ -2506,9 +2550,6 @@
   // These override earlier prototype pages so the TL/Manager experience is
   // outcome-first, scoped correctly and internally consistent.
   // ========================================================================
-  const FINAL_AGENT_KPIS = ['KPI001','KPI002','KPI003','KPI004','KPI005','KPI006','KPI007','KPI009','KPI010','KPI011','KPI012','KPI013','KPI014','KPI015','KPI016','KPI020'];
-  const FINAL_TL_MGR_KPIS = ['KPI001','KPI002','KPI003','KPI004','KPI005','KPI006','KPI007','KPI008','KPI009','KPI010','KPI011','KPI012','KPI013','KPI014','KPI015','KPI016','KPI017','KPI018','KPI019','KPI021'];
-
   function finalRag(score) { return score >= 100 ? 'Green' : score >= 92 ? 'Amber' : 'Red'; }
   function finalRagLabel(r) { return r === 'Amber' ? 'Watch' : r === 'Red' ? 'Critical' : 'Green'; }
   function finalRagClass(r) { return r === 'Green' ? 'rag-green' : r === 'Amber' ? 'rag-amber' : 'rag-red'; }
@@ -2529,9 +2570,11 @@
     }
     return { prevScore: avg(prevDates,'Score'), currScore: avg(currDates,'Score'), prevActual: avg(prevDates,'Actual'), currActual: avg(currDates,'Actual') };
   }
-  function finalMetricRows(scope, teamId, ids) {
+  function finalMetricRows(scope, teamId, ids, group) {
     const latest = finalScopeRows(scope, teamId);
-    return ids.filter(id => A.kpiById(id)).map(id => {
+    const role = roleForScope(scope);
+    const sourceIds = Array.isArray(ids) ? ids : configuredMetricIds(scope, group);
+    return sourceIds.filter(id => A.kpiVisibleForRole(id, role)).map(id => {
       const k = A.kpiById(id) || {};
       const rows = latest.filter(r => r.KPI_ID === id);
       const score = rows.length ? rows.reduce((s,r)=>s+(r.Score||0),0)/rows.length : 0;
@@ -2572,15 +2615,20 @@
     return `<section class="glass rounded-2xl p-4"><div class="flex items-center justify-between gap-2 flex-wrap mb-3"><div><div class="label">SLA/KPI detail</div><div class="font-display font-bold text-[16px]">${filter==='all'?'All metrics':finalRagLabel(filter)+' metrics'} · current week vs previous week</div></div>${filter!=='all'?`<button data-rag-filter="all" class="btn-ghost text-[11px] !py-1 !px-2">Show all</button>`:''}</div><div class="overflow-x-auto scrollbar-thin"><table class="tbl"><thead><tr><th>KPI / SLA</th><th>Category</th><th class="text-right">Previous week</th><th class="text-right">Current week</th><th class="text-right">Movement</th><th class="text-center">RAG</th><th class="text-center">Trend</th><th>14-day spark</th><th>Action</th></tr></thead><tbody>${display.map(r => `<tr><td><div class="font-medium">${escapeHtml(r.name)}</div><div class="text-[10px] text-arena-muted">${r.direction==='Lower'?'Lower is better':'Higher is better'}</div></td><td class="text-arena-muted">${escapeHtml(r.type)}</td><td class="text-right">${r.prevActual.toFixed(r.unit==='calls'?0:1)}${r.unit==='calls'?'':' '+r.unit}</td><td class="text-right font-semibold ${finalRagClass(r.rag)}">${r.currActual.toFixed(r.unit==='calls'?0:1)}${r.unit==='calls'?'':' '+r.unit}</td><td class="text-right ${r.deltaScore>=0?'rag-green':'rag-red'}">${r.deltaActual>=0?'+':''}${r.deltaActual}${r.unit==='calls'?'':' '+r.unit}</td><td class="text-center">${ragBadge(finalRagLabel(r.rag))}</td><td class="text-center">${finalTrendLabel(r)}</td><td class="min-w-[120px]">${finalTrendSpark(r)}</td><td><button data-nav="${isTL?'lead-rca':'mgr-rca'}" data-keep-filter="1" class="btn-ghost text-[11px] !py-1 !px-2"><i data-lucide="git-branch" class="text-[11px]"></i> View RCA</button></td></tr>`).join('') || `<tr><td colspan="9" class="text-center text-arena-muted py-6">No metrics for this filter.</td></tr>`}</tbody></table></div></section>`;
   }
   function finalOutcomeDefs(isTL) {
+    const role = isTL ? 'Team Lead' : 'Manager';
+    const salesDrivers = outcomeDriverIds(role, 'sales');
+    const qualityDrivers = outcomeDriverIds(role, 'quality');
+    const complianceDrivers = outcomeDriverIds(role, 'compliance');
+    const efficiencyDrivers = outcomeDriverIds(role, 'efficiency');
     return [
       {
         id:'sales',
         name:'Sales Conversion Outcomes',
         metric:'Overall conversion, eligible-call conversion and applications per day',
         client:'Enrollment production and close effectiveness',
-        drivers:['KPI002','KPI001','KPI003','KPI014'],
-        primary:'Eligible Call Conversion Rate',
-        secondary:'Applications Per Day',
+        drivers:salesDrivers,
+        primary:finalKpiName(salesDrivers[0]) || 'Sales conversion',
+        secondary:finalKpiName(salesDrivers[1]) || 'Application velocity',
         root:'Eligible/interested calls are not consistently converting because of discovery depth, objection handling, benefit-value framing or insufficient compliant selling time.',
         symptom:'Eligible-call close rate and APD are below target or deteriorating week over week.',
         action:isTL?'Coach watch-list agents on needs discovery, objection handling and compliant ask-for-enrollment behavior':'Protect AEP conversion capacity and replicate top-quartile closer behavior across teams',
@@ -2593,9 +2641,9 @@
         name:'Revenue Quality Outcomes',
         metric:'Effectuation rate and fallout reason-code mix',
         client:'Activated premium-paying members and preventable fallout',
-        drivers:['KPI004','KPI005','KPI012','KPI010'],
-        primary:'Effectuation Rate',
-        secondary:'Fallout Rate',
+        drivers:qualityDrivers,
+        primary:finalKpiName(qualityDrivers[0]) || 'Effectuation quality',
+        secondary:finalKpiName(qualityDrivers[1]) || 'Fallout quality',
         root:'Submitted applications are leaking before activation because of plan-fit issues, incomplete/duplicate application errors, eligibility mismatch or unclear disclosures.',
         symptom:'Applications are being submitted but not converting into active effectuated members at the expected rate.',
         action:isTL?'Review fallout reason codes daily and audit applications before submission':'Create account-level effectuation/fallout recovery plan with carrier feedback loop',
@@ -2608,9 +2656,9 @@
         name:'Compliance Outcome Risk',
         metric:'CMS test calls, CTMs, SOA compliance, disclosures and call adherence',
         client:'Regulatory safety and audit readiness',
-        drivers:['KPI006','KPI009','KPI010','KPI013','KPI007','KPI012'],
-        primary:'SOA Compliance Rate',
-        secondary:'Disclosure Completion Rate',
+        drivers:complianceDrivers,
+        primary:finalKpiName(complianceDrivers[0]) || 'Compliance performance',
+        secondary:finalKpiName(complianceDrivers[1]) || 'Disclosure quality',
         root:'Compliance risk is coming from missed SOA documentation, skipped or out-of-sequence disclosures, call-flow deviation, QA misses or complaint-risk language.',
         symptom:'Any CMS test-call failure, CTM, SOA miss or disclosure gap requires immediate review regardless of sales performance.',
         action:isTL?'Launch compliance shield coaching and same-day CTM/CMS review':'Prioritize compliance RCA by team and pause unsafe conversion behaviors',
@@ -2623,9 +2671,9 @@
         name:'Operating Efficiency Outcomes',
         metric:'AHT, schedule adherence, utilization, shrinkage and cost per eligible call',
         client:'Capacity, acquisition efficiency and cost-to-serve guardrail',
-        drivers:['KPI014','KPI015','KPI016','KPI017','KPI021'],
-        primary:'Average Handle Time',
-        secondary:'Schedule Adherence',
+        drivers:efficiencyDrivers,
+        primary:finalKpiName(efficiencyDrivers[0]) || 'Operating efficiency',
+        secondary:finalKpiName(efficiencyDrivers[1]) || 'Schedule discipline',
         root:'Capacity and cost pressure is driven by avoidable AHT/ACW, adherence gaps, idle/unavailable time, shrinkage or inefficient eligible-call routing.',
         symptom:'Operational capacity is limiting sales opportunity or creating acquisition cost pressure.',
         action:isTL?'Improve schedule adherence, AHT/ACW discipline and utilization before adding volume':'Rebalance staffing, routing and recovery investment across teams',
@@ -2650,13 +2698,13 @@
   }
   function finalOutcomeCard(o, isTL) {
     const cls = o.rag==='Green'?'outcome-green':o.rag==='Amber'?'outcome-amber':'outcome-red';
-    return `<article class="rounded-2xl p-4 ${cls} outcome-card"><div class="flex items-start justify-between gap-3"><div><div class="label">Client outcome</div><div class="font-display font-bold text-[18px]">${escapeHtml(o.name)} ${metricHelp(o.name, o.metric, 'Weighted driver index: '+o.driverRows.map(d=>d.name).join(', '), 'Use to prioritize coaching, staffing, process or recovery actions.', o.confidence)}</div><div class="text-[11px] text-arena-muted mt-1">Client metrics influenced: ${escapeHtml(o.client)}</div></div><div class="text-right"><div class="hero-num text-3xl ${finalRagClass(o.rag)}">${o.score}</div>${ragBadge(finalRagLabel(o.rag))}</div></div><div class="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-3"><div class="rounded-xl bg-white/[0.035] border border-white/8 p-3"><div class="label">Primary driver</div><div class="font-bold mt-1">${escapeHtml(o.primary)}</div><div class="text-[10px] text-arena-muted">Secondary: ${escapeHtml(o.secondary)}</div></div><div class="rounded-xl bg-white/[0.035] border border-white/8 p-3"><div class="label">Week-on-week</div><div class="font-bold mt-1 ${o.delta>=0?'rag-green':'rag-red'}">${o.delta>=0?'+':''}${o.delta}</div><div class="text-[10px] text-arena-muted">current ${o.score} vs previous ${o.prev}</div></div><div class="rounded-xl bg-white/[0.035] border border-white/8 p-3"><div class="label">Root-cause theme</div><div class="font-bold mt-1 text-arena-cyan">${escapeHtml(o.root)}</div><div class="text-[10px] text-arena-muted">shown in RCA</div></div></div>${finalDriverTree(o)}<div class="mt-3 flex items-center justify-between gap-2 flex-wrap rounded-xl bg-white/[0.025] border border-white/8 p-3"><div><div class="label">Recommended intervention</div><div class="font-semibold text-[13px]">${escapeHtml(o.action)}</div></div><button data-action="${isTL?'new-challenge':'mgr-create-recovery'}" data-kpi="${o.driverRows[0]?.kpiId||'KPI003'}" class="btn-primary text-[12px]"><i data-lucide="swords" class="text-[12px]"></i> Create action</button></div></article>`;
+    return `<article class="rounded-2xl p-4 ${cls} outcome-card"><div class="flex items-start justify-between gap-3"><div><div class="label">Client outcome</div><div class="font-display font-bold text-[18px]">${escapeHtml(o.name)} ${metricHelp(o.name, o.metric, 'Weighted driver index: '+o.driverRows.map(d=>d.name).join(', '), 'Use to prioritize coaching, staffing, process or recovery actions.', o.confidence)}</div><div class="text-[11px] text-arena-muted mt-1">Client metrics influenced: ${escapeHtml(o.client)}</div></div><div class="text-right"><div class="hero-num text-3xl ${finalRagClass(o.rag)}">${o.score}</div>${ragBadge(finalRagLabel(o.rag))}</div></div><div class="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-3"><div class="rounded-xl bg-white/[0.035] border border-white/8 p-3"><div class="label">Primary driver</div><div class="font-bold mt-1">${escapeHtml(o.primary)}</div><div class="text-[10px] text-arena-muted">Secondary: ${escapeHtml(o.secondary)}</div></div><div class="rounded-xl bg-white/[0.035] border border-white/8 p-3"><div class="label">Week-on-week</div><div class="font-bold mt-1 ${o.delta>=0?'rag-green':'rag-red'}">${o.delta>=0?'+':''}${o.delta}</div><div class="text-[10px] text-arena-muted">current ${o.score} vs previous ${o.prev}</div></div><div class="rounded-xl bg-white/[0.035] border border-white/8 p-3"><div class="label">Root-cause theme</div><div class="font-bold mt-1 text-arena-cyan">${escapeHtml(o.root)}</div><div class="text-[10px] text-arena-muted">shown in RCA</div></div></div>${finalDriverTree(o)}<div class="mt-3 flex items-center justify-between gap-2 flex-wrap rounded-xl bg-white/[0.025] border border-white/8 p-3"><div><div class="label">Recommended intervention</div><div class="font-semibold text-[13px]">${escapeHtml(o.action)}</div></div><button data-action="${isTL?'new-challenge':'mgr-create-recovery'}" data-kpi="${o.driverRows[0]?.kpiId || defaultActionKpiId(isTL ? 'Team Lead' : 'Manager')}" class="btn-primary text-[12px]"><i data-lucide="swords" class="text-[12px]"></i> Create action</button></div></article>`;
   }
   function finalRenderOutcomes(scope) {
     const isTL = scope === 'team';
     const me = A.userById(A.state.activeUserId);
     const teamId = isTL ? me?.TeamID : null;
-    const metricRows = finalMetricRows(scope, teamId, FINAL_TL_MGR_KPIS);
+    const metricRows = finalMetricRows(scope, teamId);
     const outcomes = finalOutcomeRows(scope, teamId);
     const exp = (A.state.exposure || []).filter(e => isTL ? (e.Entity_Level==='Team' && e.Entity_ID===teamId) : e.Entity_Level==='Account');
     const penalty = exp.reduce((sum,e)=>sum+(e.Forecast_Penalty||0),0);
@@ -2692,13 +2740,13 @@
     const isTL = scope === 'team'; const me = A.userById(A.state.activeUserId); const teamId = isTL ? me?.TeamID : null;
     const outcomes = finalOutcomeRows(scope, teamId); const defs = finalRcaDefs(isTL);
     const teams = (A.state.teams||[]).slice().sort((a,b)=>String(a.TeamName).localeCompare(String(b.TeamName))).slice(0,3).map(t=>t.TeamName).join(', ');
-    return `<div class="space-y-4 fade-in rca-page"><section class="outcome-hero rounded-2xl p-4 sm:p-5"><div class="flex items-start justify-between gap-3 flex-wrap"><div><div class="label">Driving Client Outcomes</div><div class="font-display font-bold text-2xl sm:text-3xl tracking-tight">${isTL?'Driving Client Outcomes · Team Lead':'Driving Client Outcomes · Manager'}</div><div class="text-[12px] text-arena-muted mt-1 max-w-[860px]">Diagnose the operational drivers moving client outcomes. Includes symptom, driver KPIs, root-cause themes, hotspot and recommended intervention.</div></div><button data-nav="${isTL?'lead-trends':'mgr-trends'}" class="btn-secondary text-[12px]"><i data-lucide="line-chart" class="text-[12px]"></i> Open trends</button></div></section><section class="grid grid-cols-1 lg:grid-cols-2 gap-3">${defs.map((d,i)=>{ const o=outcomes[i]||{}; const drivers=(o.driverRows||[]); return `<article class="rounded-2xl p-4 rca-card ${o.rag==='Green'?'outcome-green':o.rag==='Amber'?'outcome-amber':'outcome-red'}"><div class="flex items-start justify-between gap-3"><div><div class="label">Client outcome driver</div><div class="font-display font-bold text-[18px]">${escapeHtml(d.name)} ${metricHelp(d.name+' RCA', 'Explains why the client metric is moving and which operational drivers are contributing.', 'Outcome trend + KPI driver movement + root-cause themes + team/process hotspot.', 'Use for coaching, mission/challenge creation, staffing or process intervention.', d.confidence)}</div><div class="text-[11px] text-arena-muted mt-1">Metric: ${escapeHtml(d.metric)}</div></div><div class="text-right"><div class="hero-num text-3xl ${finalRagClass(o.rag||'Amber')}">${o.score||0}</div>${ragBadge(finalRagLabel(o.rag||'Amber'))}</div></div><div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-3"><div class="rounded-xl bg-white/[0.035] border border-white/8 p-3"><div class="label">Symptom</div><div class="text-[12px] text-arena-text leading-snug">${escapeHtml(d.symptom)}</div></div><div class="rounded-xl bg-white/[0.035] border border-white/8 p-3"><div class="label">Hotspot ${isTL?'agents/groups':'teams'}</div><div class="text-[12px] text-arena-text leading-snug">${isTL ? 'Watch-list agents by driver KPI, call-audit theme and fallout/CTM reason code' : teams}</div></div></div><div class="mt-3"><div class="label">Driver KPIs</div><div class="flex flex-wrap gap-1.5 mt-2">${drivers.map(x=>`<span class="chip ${finalRagBg(x.rag)}">${escapeHtml(x.name)}</span>`).join('')}</div></div><div class="mt-3"><div class="label">Root-cause themes</div>${rootCauseChips([d.root, d.primary, d.secondary].filter(Boolean))}</div><div class="mt-3 rounded-xl bg-white/[0.025] border border-white/8 p-3"><div class="label">Drill-down panel</div><div class="grid grid-cols-1 md:grid-cols-2 gap-2 mt-2"><div><b>Trend:</b> ${o.delta>=0?'+':''}${o.delta||0} WoW · ${finalRagLabel(o.rag||'Amber')}</div><div><b>Impact:</b> ${isTL?'Team coaching priority with clear owner/date':'Account outcome priority with team-level recovery owner'}</div><div><b>Owner:</b> ${d.owner}</div><div><b>Success metric:</b> ${escapeHtml(d.success)}</div></div></div><div class="mt-3 flex items-center justify-between gap-2 flex-wrap rounded-xl bg-white/[0.025] border border-white/8 p-3"><div><div class="label">Recommended intervention</div><div class="font-semibold text-[13px]">${escapeHtml(d.action)}</div><div class="text-[10px] text-arena-amber mt-1">Guardrail: team/process indicator, not standalone individual-agent blame.</div></div><button data-action="${isTL?'new-challenge':'mgr-create-recovery'}" data-kpi="${drivers[0]?.kpiId || 'KPI003'}" class="btn-primary text-[12px]"><i data-lucide="swords" class="text-[12px]"></i> Create action</button></div></article>`;}).join('')}</section></div>`;
+    return `<div class="space-y-4 fade-in rca-page"><section class="outcome-hero rounded-2xl p-4 sm:p-5"><div class="flex items-start justify-between gap-3 flex-wrap"><div><div class="label">Driving Client Outcomes</div><div class="font-display font-bold text-2xl sm:text-3xl tracking-tight">${isTL?'Driving Client Outcomes · Team Lead':'Driving Client Outcomes · Manager'}</div><div class="text-[12px] text-arena-muted mt-1 max-w-[860px]">Diagnose the operational drivers moving client outcomes. Includes symptom, driver KPIs, root-cause themes, hotspot and recommended intervention.</div></div><button data-nav="${isTL?'lead-trends':'mgr-trends'}" class="btn-secondary text-[12px]"><i data-lucide="line-chart" class="text-[12px]"></i> Open trends</button></div></section><section class="grid grid-cols-1 lg:grid-cols-2 gap-3">${defs.map((d,i)=>{ const o=outcomes[i]||{}; const drivers=(o.driverRows||[]); return `<article class="rounded-2xl p-4 rca-card ${o.rag==='Green'?'outcome-green':o.rag==='Amber'?'outcome-amber':'outcome-red'}"><div class="flex items-start justify-between gap-3"><div><div class="label">Client outcome driver</div><div class="font-display font-bold text-[18px]">${escapeHtml(d.name)} ${metricHelp(d.name+' RCA', 'Explains why the client metric is moving and which operational drivers are contributing.', 'Outcome trend + KPI driver movement + root-cause themes + team/process hotspot.', 'Use for coaching, mission/challenge creation, staffing or process intervention.', d.confidence)}</div><div class="text-[11px] text-arena-muted mt-1">Metric: ${escapeHtml(d.metric)}</div></div><div class="text-right"><div class="hero-num text-3xl ${finalRagClass(o.rag||'Amber')}">${o.score||0}</div>${ragBadge(finalRagLabel(o.rag||'Amber'))}</div></div><div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-3"><div class="rounded-xl bg-white/[0.035] border border-white/8 p-3"><div class="label">Symptom</div><div class="text-[12px] text-arena-text leading-snug">${escapeHtml(d.symptom)}</div></div><div class="rounded-xl bg-white/[0.035] border border-white/8 p-3"><div class="label">Hotspot ${isTL?'agents/groups':'teams'}</div><div class="text-[12px] text-arena-text leading-snug">${isTL ? 'Watch-list agents by driver KPI, call-audit theme and fallout/CTM reason code' : teams}</div></div></div><div class="mt-3"><div class="label">Driver KPIs</div><div class="flex flex-wrap gap-1.5 mt-2">${drivers.map(x=>`<span class="chip ${finalRagBg(x.rag)}">${escapeHtml(x.name)}</span>`).join('')}</div></div><div class="mt-3"><div class="label">Root-cause themes</div>${rootCauseChips([d.root, d.primary, d.secondary].filter(Boolean))}</div><div class="mt-3 rounded-xl bg-white/[0.025] border border-white/8 p-3"><div class="label">Drill-down panel</div><div class="grid grid-cols-1 md:grid-cols-2 gap-2 mt-2"><div><b>Trend:</b> ${o.delta>=0?'+':''}${o.delta||0} WoW · ${finalRagLabel(o.rag||'Amber')}</div><div><b>Impact:</b> ${isTL?'Team coaching priority with clear owner/date':'Account outcome priority with team-level recovery owner'}</div><div><b>Owner:</b> ${d.owner}</div><div><b>Success metric:</b> ${escapeHtml(d.success)}</div></div></div><div class="mt-3 flex items-center justify-between gap-2 flex-wrap rounded-xl bg-white/[0.025] border border-white/8 p-3"><div><div class="label">Recommended intervention</div><div class="font-semibold text-[13px]">${escapeHtml(d.action)}</div><div class="text-[10px] text-arena-amber mt-1">Guardrail: team/process indicator, not standalone individual-agent blame.</div></div><button data-action="${isTL?'new-challenge':'mgr-create-recovery'}" data-kpi="${drivers[0]?.kpiId || defaultActionKpiId(isTL ? 'Team Lead' : 'Manager')}" class="btn-primary text-[12px]"><i data-lucide="swords" class="text-[12px]"></i> Create action</button></div></article>`;}).join('')}</section></div>`;
   }
   function renderLeadRca() { return finalRenderRca('team'); }
   function renderMgrRca() { return finalRenderRca('account'); }
   function finalRenderTrends(scope) {
     const isTL = scope === 'team'; const me=A.userById(A.state.activeUserId); const teamId=isTL?me?.TeamID:null;
-    const rows = finalMetricRows(scope, teamId, FINAL_TL_MGR_KPIS); const active=A.state.ragFilter||'all';
+    const rows = finalMetricRows(scope, teamId); const active=A.state.ragFilter||'all';
     const sales = rows.filter(r => ['Overall Conversion Rate','Eligible Call Conversion Rate','Applications Per Day'].includes(r.name));
     const revenueQuality = rows.filter(r => ['Effectuation Rate','Fallout Rate','Cost Per Acquisition','Gross Cost Per Application'].includes(r.name));
     const compliance = rows.filter(r => ['CMS Test Call Score','CTM Rate / 1,000 Enrollments','SOA Compliance Rate','Disclosure Completion Rate','Call Adherence Rate'].includes(r.name));
@@ -2707,13 +2755,13 @@
     return `<div class="space-y-4 fade-in trends-page"><section class="outcome-hero rounded-2xl p-4 sm:p-5"><div class="flex items-start justify-between gap-3 flex-wrap"><div><div class="label">SLA/KPI Trends</div><div class="font-display font-bold text-2xl sm:text-3xl tracking-tight">${isTL?'SLA/KPI Trends · Team Lead':'SLA/KPI Trends · Manager'}</div><div class="text-[12px] text-arena-muted mt-1 max-w-[860px]">Dedicated week-on-week trend page. ${isTL?'Team scope only.':'Account roll-up with team contribution view.'}</div></div><button data-nav="${isTL?'lead-rca':'mgr-rca'}" data-keep-filter="1" class="btn-secondary text-[12px]"><i data-lucide="git-branch" class="text-[12px]"></i> Outcome Drivers</button></div><div class="grid grid-cols-2 md:grid-cols-4 gap-2 mt-4">${finalRagCountButtons(rows)}</div><div class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">${mini('Sales trend',sales)}${mini('Revenue quality',revenueQuality)}${mini('Compliance trend',compliance)}</div>${active!=='all'?`<div class="mt-3 text-[11px] text-arena-muted">Active filter: <span class="font-bold ${finalRagClass(active)}">${finalRagLabel(active)}</span></div>`:''}</section>${finalMetricTable(rows,isTL)}${!isTL?finalTeamContribution(rows):''}</div>`;
   }
   function finalTeamContribution(rows) {
-    const teamRows = (A.state.teams||[]).map(t => { const m=finalMetricRows('team',t.TeamID,FINAL_TL_MGR_KPIS); const avg=m.reduce((s,r)=>s+r.score,0)/Math.max(1,m.length); return {team:t, avg, rag:finalRag(avg), watch:m.filter(x=>x.rag!=='Green').length}; });
+    const teamRows = (A.state.teams||[]).map(t => { const m=finalMetricRows('team',t.TeamID); const avg=m.reduce((s,r)=>s+r.score,0)/Math.max(1,m.length); return {team:t, avg, rag:finalRag(avg), watch:m.filter(x=>x.rag!=='Green').length}; });
     return `<section class="glass rounded-2xl p-4"><div class="label">Team contribution</div><div class="font-display font-bold text-[16px] mb-3">Which teams are contributing to deteriorating metrics</div><div class="grid grid-cols-1 md:grid-cols-5 gap-2">${teamRows.map(x=>`<div class="rounded-xl bg-white/[0.03] border border-white/8 p-3"><div class="font-semibold text-[13px]">${escapeHtml(x.team.TeamName)}</div><div class="hero-num text-2xl ${finalRagClass(x.rag)} mt-1">${Math.round(x.avg)}</div><div class="text-[10px] text-arena-muted">${x.watch} watch/critical drivers</div></div>`).join('')}</div></section>`;
   }
   function renderLeadTrends() { return finalRenderTrends('team'); }
   function renderMgrTrends() { return finalRenderTrends('account'); }
   function renderLeadTeam() {
-    const me=A.userById(A.state.activeUserId); const teamId=me?.TeamID; const team=A.teamById(teamId); const rows=finalMetricRows('team',teamId,FINAL_TL_MGR_KPIS); const agents=A.leaderboardForTeam(teamId||''); const green=agents.filter(a=>a.RAGStatus==='Green').length, amber=agents.filter(a=>a.RAGStatus==='Amber').length, red=agents.filter(a=>a.RAGStatus==='Red').length; const avg=agents.reduce((s,a)=>s+(a.PerformanceScore||0),0)/Math.max(1,agents.length);
+    const me=A.userById(A.state.activeUserId); const teamId=me?.TeamID; const team=A.teamById(teamId); const rows=finalMetricRows('team',teamId); const agents=A.leaderboardForTeam(teamId||''); const green=agents.filter(a=>a.RAGStatus==='Green').length, amber=agents.filter(a=>a.RAGStatus==='Amber').length, red=agents.filter(a=>a.RAGStatus==='Red').length; const avg=agents.reduce((s,a)=>s+(a.PerformanceScore||0),0)/Math.max(1,agents.length);
     return `<div class="space-y-4 fade-in"><section class="arena-hero p-4 sm:p-5"><div class="flex items-start justify-between gap-3 flex-wrap"><div><div class="label">Team Pulse</div><div class="font-display font-bold text-2xl sm:text-3xl tracking-tight">Team Pulse · ${escapeHtml(team?.TeamName||'Team')}</div><div class="text-[12px] text-arena-muted mt-1">Stable team view with agent health, team KPI pulse, and coaching actions.</div></div><button data-nav="lead-outcomes" class="btn-secondary text-[12px]">Client Outcomes</button></div><div class="grid grid-cols-2 md:grid-cols-4 gap-2 mt-4"><div class="glass rounded-2xl p-4"><div class="label">Team performance</div><div class="hero-num text-3xl ${avg>=100?'rag-green':avg>=92?'rag-amber':'rag-red'}">${avg.toFixed(1)}</div></div><button data-nav="lead-trends" data-rag-filter="Green" class="glass rounded-2xl p-4 text-left"><div class="label">Green agents</div><div class="hero-num text-3xl rag-green">${green}</div></button><button data-nav="lead-trends" data-rag-filter="Amber" class="glass rounded-2xl p-4 text-left"><div class="label">Watch agents</div><div class="hero-num text-3xl rag-amber">${amber}</div></button><button data-nav="lead-trends" data-rag-filter="Red" class="glass rounded-2xl p-4 text-left"><div class="label">Critical agents</div><div class="hero-num text-3xl rag-red">${red}</div></button></div></section>${finalMetricTable(rows,true)}<section class="glass rounded-2xl p-4"><div class="label">Agent pulse</div><div class="overflow-x-auto scrollbar-thin mt-3"><table class="tbl"><thead><tr><th>Agent</th><th>Score</th><th>RAG</th><th>Calls handled</th><th>Action</th></tr></thead><tbody>${agents.slice(0,20).map(a=>`<tr><td>${escapeHtml(A.userById(a.UserID)?.Name||a.UserID)}</td><td class="font-bold ${a.RAGStatus==='Green'?'rag-green':a.RAGStatus==='Amber'?'rag-amber':'rag-red'}">${(a.PerformanceScore||0).toFixed(1)}</td><td>${ragBadge(a.RAGStatus==='Amber'?'Watch':a.RAGStatus)}</td><td>${a.CallsHandled||a.PointsEarnedToday||'—'}</td><td><button data-action="new-challenge" data-agent="${a.UserID}" class="btn-ghost text-[11px] !py-1 !px-2">Challenge / coach</button></td></tr>`).join('')}</tbody></table></div></section></div>`;
   }
   function renderMgrCommercial() {
@@ -2740,12 +2788,6 @@
   // clearer: Operational Metrics explain controllable behaviour; Outcome
   // Metrics explain sales/commercial/member results.
   // ========================================================================
-  const OPERATIONAL_METRICS = ['KPI014','KPI012','KPI015','KPI016','KPI013','KPI009','KPI010','KPI006'];
-  const OUTCOME_METRICS = ['KPI001','KPI002','KPI003','KPI004','KPI005','KPI011','KPI007','KPI008','KPI018','KPI019','KPI021'];
-  // Contractual SLA penalties are limited to controllable operating health: AHT, quality/accuracy and CMS compliance.
-  const SLA_HEALTH_METRICS = ['KPI014','KPI012','KPI006','KPI009','KPI010','KPI013'];
-  const OUTCOME_UPSIDE_METRICS = ['KPI001','KPI002','KPI003','KPI004','KPI005','KPI011'];
-
   function metricSummaryCard(r) {
     const unit = r.unit === 'calls' ? '' : (r.unit ? ' ' + r.unit : '');
     return `<div class="rounded-xl bg-white/[0.03] border border-white/8 p-3">
@@ -2757,8 +2799,8 @@
 
   function segmentedMetricSections(scope, teamId, compact) {
     const isTL = scope === 'team';
-    const op = finalMetricRows(scope, teamId, OPERATIONAL_METRICS);
-    const out = finalMetricRows(scope, teamId, OUTCOME_METRICS);
+    const op = finalMetricRows(scope, teamId, null, 'operational');
+    const out = finalMetricRows(scope, teamId, null, 'outcome');
     const nav = isTL ? 'lead-trends' : 'mgr-trends';
     const opRows = compact ? op.slice(0, 6) : op;
     const outRows = compact ? out.slice(0, 6) : out;
@@ -2782,11 +2824,15 @@
     return (A.state.exposure || []).filter(e => scope === 'team' ? (e.Entity_Level === 'Team' && e.Entity_ID === teamId) : e.Entity_Level === 'Account');
   }
   function commercialOutcomeRows(scope, teamId) {
-    const rows = commercialExposure(scope, teamId).filter(e => SLA_HEALTH_METRICS.includes(e.KPI_ID));
+    const role = roleForScope(scope);
+    const rows = commercialExposure(scope, teamId).filter(e => isConfiguredSlaHealthKpi(e.KPI_ID, role));
     return rows.map(e => ({ ...e }));
   }
   function outcomeUpsideRows(scope, teamId) {
-    return commercialExposure(scope, teamId).filter(e => OUTCOME_UPSIDE_METRICS.includes(e.KPI_ID)).map(e => ({ ...e }));
+    const role = roleForScope(scope);
+    return commercialExposure(scope, teamId)
+      .filter(e => A.kpiVisibleForRole(e.KPI_ID, role) && A.kpiMetricGroup(e.KPI_ID) === 'outcome')
+      .map(e => ({ ...e }));
   }
   function commercialTotals(scope, teamId) {
     const exp = commercialExposure(scope, teamId);
@@ -2866,7 +2912,7 @@
   function renderMgrOutcomes() { return finalRenderOutcomes('account'); }
 
   function finalRenderTrends(scope) {
-    const isTL = scope === 'team'; const me=A.userById(A.state.activeUserId); const teamId=isTL?me?.TeamID:null; const opRows=finalMetricRows(scope,teamId,OPERATIONAL_METRICS); const outRows=finalMetricRows(scope,teamId,OUTCOME_METRICS); const title=isTL?'Metrics Trends · Team Lead':'Metrics Trends · Manager';
+    const isTL = scope === 'team'; const me=A.userById(A.state.activeUserId); const teamId=isTL?me?.TeamID:null; const opRows=finalMetricRows(scope,teamId,null,'operational'); const outRows=finalMetricRows(scope,teamId,null,'outcome'); const title=isTL?'Metrics Trends · Team Lead':'Metrics Trends · Manager';
     return `<div class="space-y-4 fade-in trends-page"><section class="outcome-hero rounded-2xl p-4 sm:p-5"><div class="flex items-start justify-between gap-3 flex-wrap"><div><div class="label">SLA/KPI Trends</div><div class="font-display font-bold text-2xl sm:text-3xl tracking-tight">${title}</div><div class="text-[12px] text-arena-muted mt-1 max-w-[860px]">This page intentionally separates regular operational levers from the outcome metrics they influence.</div></div><button data-nav="${isTL?'lead-outcomes':'mgr-outcomes'}" class="btn-secondary text-[12px]">Open outcomes</button></div></section>${finalMetricTable(opRows,isTL).replace('SLA/KPI detail','Operational Metrics').replace('All metrics','All operational metrics')}${finalMetricTable(outRows,isTL).replace('SLA/KPI detail','Outcome Metrics').replace('All metrics','All outcome metrics')}${!isTL?finalTeamContribution(outRows):''}</div>`;
   }
   function renderLeadTrends() { return finalRenderTrends('team'); }

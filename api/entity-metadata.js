@@ -44,7 +44,62 @@ const CONTROL_ENTITIES = [
   'Admin_Audit_Log',
 ];
 
+const IMPORTABLE_ENTITIES = [
+  ...SOURCE_ENTITIES,
+  'App_Config',
+  'Feature_Flags',
+];
+
 const ALL_ENTITIES = [...SOURCE_ENTITIES, ...CONTROL_ENTITIES];
+
+const CONTROL_ENTITY_COLUMNS = {
+  Import_Log: [
+    'Import_ID',
+    'Entity_Name',
+    'Filename',
+    'Uploaded_By',
+    'Upload_Date',
+    'Row_Count',
+    'Mode',
+    'Status',
+    'Validation_Error_Count',
+    'Commit_Timestamp',
+    'Reverted_From_Import_ID',
+  ],
+  App_Config: [
+    'Config_ID',
+    'Config_Key',
+    'Config_Value',
+    'Value_Type',
+    'Description',
+    'Version',
+    'Is_Active',
+    'Last_Modified_By',
+    'Last_Modified_Date',
+  ],
+  Feature_Flags: [
+    'Flag_ID',
+    'Flag_Key',
+    'Flag_Label',
+    'Enabled',
+    'Scope',
+    'Scope_Role',
+    'Scope_Team_ID',
+    'Modified_By',
+    'Modified_Date',
+  ],
+  Admin_Audit_Log: [
+    'Log_ID',
+    'Admin_UserID',
+    'Action_Type',
+    'Entity_Affected',
+    'Record_ID',
+    'Before_Snapshot',
+    'After_Snapshot',
+    'Timestamp',
+    'IP_Address',
+  ],
+};
 
 const PRIMARY_KEYS = {
   Users: ['UserID'],
@@ -188,6 +243,8 @@ function createId(prefix) {
 module.exports = {
   ALL_ENTITIES,
   CONTROL_ENTITIES,
+  CONTROL_ENTITY_COLUMNS,
+  IMPORTABLE_ENTITIES,
   SOURCE_ENTITIES,
   GAMIFICATION_ENTITIES,
   PRIMARY_KEYS,
